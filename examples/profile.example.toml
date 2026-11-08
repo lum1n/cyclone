@@ -25,6 +25,8 @@ linux = "~/.config/Code/User/settings.json"
 macos = "~/Library/Application Support/Code/User/settings.json"
 supported_platforms = ["linux", "macos"]
 
+# Live dump from `brew list` when `brew` is on PATH. You do not write this file.
+# A handwritten Brewfile is only captured if you opt it in as a dotfile (kind = "dotfile").
 [[components]]
 id = "brewfile"
 kind = "tool-manifest"
@@ -42,6 +44,8 @@ linux = "~/.tmux.conf"
 macos = "~/.tmux.conf"
 supported_platforms = ["linux", "macos"]
 
+# Paths below are where the live dump is stored in the image / written on restore.
+# Capture runs apt/dnf/pacman/yay/paru — do not create these .list files yourself.
 [[components]]
 id = "apt-packages"
 kind = "tool-manifest"

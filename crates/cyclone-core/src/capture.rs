@@ -8,8 +8,8 @@ use crate::bundle::{ImageBundle, InnerBundle};
 use crate::error::Result;
 use crate::manifest::{utc_now_rfc3339, ImageManifest, ManifestComponent};
 use crate::packages::{
-    dump_live, infer_package_manager, parse_declaration, should_live_dump, should_read_file,
-    HostEnv, PackageCaptureOptions, PackageDeclaration, PackageManager,
+    dump_live, parse_declaration, should_live_dump, should_read_file, HostEnv,
+    PackageCaptureOptions, PackageDeclaration, PackageManager,
 };
 use crate::paths::{expand_tilde, normalize_rel};
 use crate::platform::Platform;
@@ -71,30 +71,29 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
             continue;
         };
         let abs = expand_tilde(logical, &opts.home);
-        let pm = infer_package_manager(
-            &component.id,
-            component.linux.as_deref(),
-            component.macos.as_deref(),
-            component.package_manager,
-        );
+        let pm = component
+            .package_manager
+            .or_else(|| PackageManager::from_component_id(&component.id));
 
         if let Some(pm) = pm {
-            match capture_packages(component, logical, &abs, pm, &host, &opts, &mut warnings) {
-                Ok(Some(decl)) => {
-                    push_declaration(
-                        component,
-                        logical,
-                        decl,
-                        &mut components,
-                        &mut artifacts,
-                        &mut actions,
-                    );
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    warnings.push(format!("skip `{}`: package dump failed: {e}", component.id));
-                    continue;
+            if component.kind != ComponentKind::Dotfile {
+                match capture_packages(component, logical, &abs, pm, &host, &opts, &mut warnings) {
+                    Ok(Some(decl)) => {
+                        push_declaration(
+                            component,
+                            logical,
+                            decl,
+                            &mut components,
+                            &mut artifacts,
+                            &mut actions,
+                        );
+                        continue;
+                    }
+                    Ok(None) => continue,
+                    Err(e) => {
+                        warnings.push(format!("skip `{}`: package dump failed: {e}", component.id));
+                        continue;
+                    }
                 }
             }
         }
@@ -227,7 +226,7 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
 
 fn capture_packages(
     component: &ProfileComponent,
-    _logical: &str,
+    logical: &str,
     abs: &Path,
     manager: PackageManager,
     host: &HostEnv,
@@ -236,35 +235,66 @@ fn capture_packages(
 ) -> Result<Option<PackageDeclaration>> {
     let file_exists = abs.is_file();
     if should_read_file(opts.packages.mode, file_exists) {
-        match read_file(abs) {
-            FileRead::Ok { bytes, .. } => {
-                let body = String::from_utf8_lossy(&bytes);
-                return Ok(Some(parse_declaration(manager, &host.distro.id, &body)));
-            }
-            FileRead::Skipped(reason) => {
-                warnings.push(format!("skip `{}`: {reason}", component.id));
-                return Ok(None);
-            }
-        }
+        return read_declaration_file(component, abs, manager, &host.distro.id, warnings);
     }
-    if should_live_dump(opts.packages.mode, file_exists) {
-        match dump_live(manager, &host.distro, &opts.packages.commands)? {
-            Some(decl) => return Ok(Some(decl)),
-            None => {
-                if !file_exists {
-                    warnings.push(format!(
-                        "skip `{}`: {} is not available to dump packages on {} ({})",
-                        component.id,
-                        manager.display_name(),
-                        host.platform,
-                        host.distro.id
-                    ));
+    if should_live_dump(opts.packages.mode) {
+        if manager.present_on(&opts.packages.commands) {
+            match dump_live(manager, &host.distro, &opts.packages.commands)? {
+                Some(decl) => return Ok(Some(decl)),
+                None => {
+                    warnings.push(missing_manager_warning(component, manager, host));
                     return Ok(None);
                 }
             }
         }
+        // Homebrew only: a user-opted-in Brewfile is captured as a file when `brew` is absent.
+        if manager == PackageManager::Homebrew && file_exists {
+            return read_declaration_file(component, abs, manager, &host.distro.id, warnings);
+        }
+        warnings.push(missing_manager_warning(component, manager, host));
+        return Ok(None);
     }
+    warnings.push(format!(
+        "skip `{}`: --packages files requires a declaration at {logical} \
+(default capture queries `{}` instead; no user-maintained list file is needed)",
+        component.id,
+        manager.command()
+    ));
     Ok(None)
+}
+
+fn read_declaration_file(
+    component: &ProfileComponent,
+    abs: &Path,
+    manager: PackageManager,
+    distro_id: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Option<PackageDeclaration>> {
+    match read_file(abs) {
+        FileRead::Ok { bytes, .. } => {
+            let body = String::from_utf8_lossy(&bytes);
+            Ok(Some(parse_declaration(manager, distro_id, &body)))
+        }
+        FileRead::Skipped(reason) => {
+            warnings.push(format!("skip `{}`: {reason}", component.id));
+            Ok(None)
+        }
+    }
+}
+
+fn missing_manager_warning(
+    component: &ProfileComponent,
+    manager: PackageManager,
+    host: &HostEnv,
+) -> String {
+    format!(
+        "skip `{}`: `{}` is not on PATH on {} ({}); \
+Cyclone lists installed packages by running the manager (no user-maintained list file is required)",
+        component.id,
+        manager.command(),
+        host.platform,
+        host.distro.id
+    )
 }
 
 fn push_declaration(

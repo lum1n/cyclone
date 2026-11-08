@@ -73,8 +73,8 @@ enum Commands {
         home: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
-        /// How to capture package managers: `auto` (file if present, else live dump), `files`, or `live`.
-        #[arg(long, default_value = "auto", env = "CYCLONE_PACKAGE_CAPTURE")]
+        /// How to capture package managers: `live` (query brew/apt/pacman/…; default), `files` (profile paths only), or `auto` (same as live).
+        #[arg(long, default_value = "live", env = "CYCLONE_PACKAGE_CAPTURE")]
         packages: String,
         /// Low-memory Argon2id (tests only).
         #[arg(long, hide = true)]

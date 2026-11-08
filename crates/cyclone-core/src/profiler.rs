@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::error::{CycloneError, Result};
 use crate::manifest::SecretReference;
-use crate::packages::{infer_package_manager, CommandProbe, HostEnv, PackageManager};
+use crate::packages::{infer_package_manager, CommandProbe, PackageManager};
 use crate::paths::{expand_tilde, to_logical};
 use crate::platform::Platform;
 use crate::profile::{ComponentKind, OptInReason, Profile, ProfileComponent};
@@ -153,8 +153,6 @@ pub fn build_profile(session: &ProfilerSession<'_>) -> Result<Profile> {
     let mut components = Vec::new();
     let mut used_ids = BTreeSet::new();
     let mut used_paths = BTreeSet::new();
-    let host = HostEnv::detect_for(session.platform, &CommandProbe::System).ok();
-
     let catalog_paths: Vec<String> = CATALOG
         .iter()
         .filter_map(|e| match session.platform {
@@ -167,16 +165,14 @@ pub fn build_profile(session: &ProfilerSession<'_>) -> Result<Profile> {
     for entry in CATALOG {
         let mut component = catalog_component(entry);
         if let Some(logical) = component.path_for(session.platform).map(str::to_string) {
-            let abs = expand_tilde(&logical, session.home);
-            component.include = abs.exists();
-            used_paths.insert(logical);
-        }
-        if !component.include {
-            if let (Some(pm), Some(host)) = (component.package_manager, host.as_ref()) {
-                if host.manager == Some(pm) || host.has_helper(pm) {
-                    component.include = true;
-                }
+            used_paths.insert(logical.clone());
+            if let Some(pm) = component.package_manager {
+                component.include = pm.present_on(&CommandProbe::System);
+            } else {
+                component.include = expand_tilde(&logical, session.home).exists();
             }
+        } else if let Some(pm) = component.package_manager {
+            component.include = pm.present_on(&CommandProbe::System);
         }
         used_ids.insert(component.id.clone());
         components.push(component);
@@ -476,6 +472,9 @@ fn print_candidate_groups(profile: &Profile, session: &ProfilerSession<'_>) -> R
 }
 
 fn component_found(c: &ProfileComponent, session: &ProfilerSession<'_>) -> bool {
+    if let Some(pm) = c.package_manager {
+        return pm.present_on(&CommandProbe::System);
+    }
     c.path_for(session.platform)
         .map(|p| expand_tilde(p, session.home).exists())
         .unwrap_or(false)
@@ -580,7 +579,13 @@ mod tests {
         // More specific catalog path wins; the parent tree is still listed.
         let apt_dir = by_path(&profile, "~/.config/apt");
         assert!(!apt_dir.include);
-        assert!(by_path(&profile, "~/.config/apt/packages.list").include);
+        // apt-packages is included only when `apt`/`apt-get` is on PATH, not because
+        // a user-maintained packages.list exists in the fixture tree.
+        let apt_list = by_path(&profile, "~/.config/apt/packages.list");
+        assert_eq!(
+            apt_list.include,
+            crate::platform::command_on_path("apt-get") || crate::platform::command_on_path("apt")
+        );
 
         assert!(profile
             .components
@@ -602,6 +607,35 @@ mod tests {
         assert!(warnings.is_empty());
         assert!(!by_path(&profile, "~/.tmux.conf").include);
         assert!(by_path(&profile, "~/.ssh/id_ed25519").include);
+    }
+
+    #[test]
+    fn package_managers_follow_the_binary_not_a_list_file() {
+        let dir = tempdir().unwrap();
+        let profile = discover_defaults(dir.path(), Platform::Linux).unwrap();
+        let apt = profile
+            .components
+            .iter()
+            .find(|c| c.id == "apt-packages")
+            .unwrap();
+        assert_eq!(
+            apt.include,
+            crate::platform::command_on_path("apt-get") || crate::platform::command_on_path("apt")
+        );
+        assert!(!dir.path().join(".config/apt/packages.list").exists());
+
+        let pacman = profile
+            .components
+            .iter()
+            .find(|c| c.id == "pacman-packages")
+            .unwrap();
+        assert_eq!(pacman.include, crate::platform::command_on_path("pacman"));
+        let brew = profile
+            .components
+            .iter()
+            .find(|c| c.id == "brewfile")
+            .unwrap();
+        assert_eq!(brew.include, crate::platform::command_on_path("brew"));
     }
 
     #[test]
