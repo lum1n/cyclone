@@ -1,15 +1,19 @@
 [package]
 name = "cyclone-ext-exe"
-description = "Cyclone extension stub for exe.dev VM provisioning"
+description = "Cyclone extension: bootstrap an exe.dev VM from an encrypted image"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
+base64.workspace = true
 cyclone-core.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+ureq.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

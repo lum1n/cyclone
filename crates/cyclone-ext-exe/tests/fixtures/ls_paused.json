@@ -1,0 +1,11 @@
+{
+  "vms": [
+    {
+      "https_url": "https://dev-box.exe.xyz",
+      "ssh_dest": "dev-box.exe.xyz",
+      "ssh_host": "dev-box.exe.xyz",
+      "status": "paused",
+      "vm_name": "dev-box"
+    }
+  ]
+}

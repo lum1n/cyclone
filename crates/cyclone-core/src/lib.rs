@@ -52,7 +52,9 @@ pub use bundle::{ImageBundle, ImageHeader, InnerBundle};
 pub use capture::{capture, CaptureOptions, CaptureReport};
 pub use crypto::{decrypt_bytes, encrypt_bytes, EncryptionKey, KdfParams};
 pub use error::{CycloneError, Result};
-pub use extension::{Extension, ProvisionPlan, ProvisionStep, ProvisionTarget};
+pub use extension::{
+    ApplyOptions, Extension, ProvisionPlan, ProvisionResult, ProvisionStep, ProvisionTarget,
+};
 pub use inspect::{inspect, inspect_envelope, InspectReport};
 pub use manifest::{ImageManifest, ManifestComponent, SecretReference};
 pub use paths::{default_home, expand_tilde, mapped_dest, to_logical};
