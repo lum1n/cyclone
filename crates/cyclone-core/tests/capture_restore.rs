@@ -230,11 +230,22 @@ fn macos_path_mapping_and_tool_diffs() {
         .detail
         .contains("~/Library/Application Support/Code/User/settings.json"));
 
-    assert!(dry.planned_actions.iter().any(|a| {
-        a.component_id == "apt-packages" && a.kind == RestoreActionKind::SkipUnsupported
-    }));
+    if dry
+        .planned_actions
+        .iter()
+        .any(|a| a.component_id == "apt-packages")
+    {
+        assert!(dry.planned_actions.iter().any(|a| {
+            a.component_id == "apt-packages" && a.kind == RestoreActionKind::SkipUnsupported
+        }));
+    }
 
-    if !cyclone_core::command_on_path("brew") {
+    if dry
+        .planned_actions
+        .iter()
+        .any(|a| a.component_id == "brewfile")
+        && !cyclone_core::command_on_path("brew")
+    {
         assert!(dry.planned_actions.iter().any(|a| {
             a.component_id == "brewfile" && a.kind == RestoreActionKind::SkipMissingTool
         }));

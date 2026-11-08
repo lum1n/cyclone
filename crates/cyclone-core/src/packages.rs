@@ -252,11 +252,11 @@ pub struct PackageDeclaration {
 /// How capture obtains package declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackageCaptureMode {
-    /// Use a declaration file when it exists; otherwise dump from the live manager.
+    /// Query the live manager (`brew list`, `pacman -Qe`, …). Same as [`Self::Live`].
     Auto,
-    /// Only read profile paths (tests / air-gapped).
+    /// Only read profile paths (air-gapped / explicit). Not the default.
     Files,
-    /// Only dump from the live manager.
+    /// Dump installed packages from the manager command. Does not read user `.list` files.
     Live,
 }
 
@@ -277,7 +277,7 @@ impl FromStr for PackageCaptureMode {
 
 impl Default for PackageCaptureMode {
     fn default() -> Self {
-        Self::Auto
+        Self::Live
     }
 }
 
@@ -292,7 +292,7 @@ pub struct PackageCaptureOptions {
 impl Default for PackageCaptureOptions {
     fn default() -> Self {
         Self {
-            mode: PackageCaptureMode::Auto,
+            mode: PackageCaptureMode::Live,
             distro: None,
             commands: CommandProbe::System,
         }
@@ -838,11 +838,23 @@ fn dump_homebrew(commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
             });
         }
     }
-    if let Ok(formulae) = commands.output("brew", &["list", "--formula", "--versions"]) {
+    let formulae = commands
+        .output("brew", &["list", "--formula", "--versions"])
+        .or_else(|_| commands.output("brew", &["list", "--versions"]))
+        .or_else(|_| commands.output("brew", &["list"]));
+    if let Ok(formulae) = formulae {
         packages.extend(parse_brew_list(&formulae, "formula"));
     }
-    if let Ok(casks) = commands.output("brew", &["list", "--cask", "--versions"]) {
+    let casks = commands
+        .output("brew", &["list", "--cask", "--versions"])
+        .or_else(|_| commands.output("brew", &["list", "--cask"]));
+    if let Ok(casks) = casks {
         packages.extend(parse_brew_list(&casks, "cask"));
+    }
+    if packages.is_empty() {
+        if let Ok(bundle) = commands.output("brew", &["bundle", "dump", "--file", "-"]) {
+            packages = parse_brewfile(&bundle);
+        }
     }
     Ok(packages)
 }
@@ -915,7 +927,9 @@ fn dump_pacman(commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
         } else {
             &["-Qe"]
         };
-    let body = commands.output("pacman", args)?;
+    let body = commands
+        .output("pacman", args)
+        .or_else(|_| commands.output("pacman", &["-Q"]))?;
     Ok(parse_name_version_lines(&body, ' '))
 }
 
@@ -930,10 +944,6 @@ fn dump_aur_helper(program: &str, commands: &CommandProbe) -> Result<Vec<Package
 }
 
 fn dump_apk(commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
-    if Path::new("/etc/apk/world").is_file() && matches!(commands, CommandProbe::System) {
-        let body = std::fs::read_to_string("/etc/apk/world")?;
-        return Ok(parse_name_eq_lines(&body));
-    }
     let body = commands
         .output("apk", &["info", "-e"])
         .or_else(|_| commands.output("apk", &["info"]))?;
@@ -1152,20 +1162,12 @@ pub fn summarize_names(packages: &[PackageSpec]) -> String {
     }
 }
 
-pub fn should_live_dump(mode: PackageCaptureMode, file_exists: bool) -> bool {
-    match mode {
-        PackageCaptureMode::Files => false,
-        PackageCaptureMode::Live => true,
-        PackageCaptureMode::Auto => !file_exists,
-    }
+pub fn should_live_dump(mode: PackageCaptureMode) -> bool {
+    !matches!(mode, PackageCaptureMode::Files)
 }
 
 pub fn should_read_file(mode: PackageCaptureMode, file_exists: bool) -> bool {
-    file_exists
-        && match mode {
-            PackageCaptureMode::Live => false,
-            PackageCaptureMode::Files | PackageCaptureMode::Auto => true,
-        }
+    file_exists && matches!(mode, PackageCaptureMode::Files)
 }
 
 /// Catalog ids in stable order (Homebrew first, then Linux managers).
@@ -1408,11 +1410,41 @@ mod tests {
     }
 
     #[test]
-    fn auto_mode_prefers_file_then_live() {
-        assert!(should_read_file(PackageCaptureMode::Auto, true));
-        assert!(!should_live_dump(PackageCaptureMode::Auto, true));
-        assert!(should_live_dump(PackageCaptureMode::Auto, false));
-        assert!(should_live_dump(PackageCaptureMode::Live, true));
+    fn live_and_auto_query_the_manager_not_list_files() {
+        assert!(should_live_dump(PackageCaptureMode::Live));
+        assert!(should_live_dump(PackageCaptureMode::Auto));
+        assert!(!should_live_dump(PackageCaptureMode::Files));
+        assert!(!should_read_file(PackageCaptureMode::Live, true));
+        assert!(!should_read_file(PackageCaptureMode::Auto, true));
+        assert!(should_read_file(PackageCaptureMode::Files, true));
         assert!(!should_read_file(PackageCaptureMode::Files, false));
+    }
+
+    #[test]
+    fn live_dump_homebrew_uses_brew_list_not_a_brewfile() {
+        let commands = CommandProbe::Scripted(
+            ScriptedCommands::new()
+                .stdout("brew", &["tap"], "homebrew/cask-fonts\n")
+                .stdout(
+                    "brew",
+                    &["list", "--formula", "--versions"],
+                    "git 2.47.0\nripgrep 14.1.1\n",
+                )
+                .stdout(
+                    "brew",
+                    &["list", "--cask", "--versions"],
+                    "firefox 131.0.3\n",
+                ),
+        );
+        let decl = dump_live(
+            PackageManager::Homebrew,
+            &Distro::from_id("macos"),
+            &commands,
+        )
+        .unwrap()
+        .expect("dump");
+        assert!(decl.packages.iter().any(|p| p.name == "git"));
+        assert!(decl.packages.iter().any(|p| p.name == "firefox"));
+        assert!(decl.body.contains("brew \"git\""));
     }
 }
