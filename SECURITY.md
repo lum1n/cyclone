@@ -22,7 +22,7 @@ We will acknowledge receipt and work on a fix. We appreciate responsible disclos
 
 Cyclone handles local filesystem paths and user-supplied passphrases. Images are **encrypted at rest in full** (Argon2id + ChaCha20-Poly1305). Report issues involving:
 
-- Secret material leaking into images, logs, `header.json`, or the git repository
+- Secret material leaking into images, logs, `header.json`, or the git repository (including default capture of SSH private keys, keychains, or browser data)
 - Cryptographic misuse in `cyclone-core` (KDF, AEAD, key lifetime)
 - Unsafe restore behavior (overwrites outside declared targets)
 

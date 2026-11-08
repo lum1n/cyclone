@@ -20,6 +20,9 @@ fn profile_for_fixture(home: &Path) -> Profile {
 const PASSPHRASE: &str = "cyclone-test-passphrase-ci";
 const UNIQUE: &str = "FIXTURE_UNIQUE_DOTFILE_TOKEN";
 const EXCLUDED: &str = "FIXTURE_EXCLUDED_TOKEN";
+const SSH_PRIVATE: &str = "FIXTURE_SSH_PRIVATE_KEY_TOKEN";
+const BROWSER: &str = "FIXTURE_BROWSER_TOKEN";
+const KEYCHAIN: &str = "FIXTURE_KEYCHAIN_TOKEN";
 
 fn capture_fixture(image: &Path, profile: &Profile, home: &Path) {
     let report = capture(CaptureOptions {
@@ -93,6 +96,13 @@ fn fixture_home_round_trip_is_encrypted() {
         .components
         .iter()
         .any(|c| c.id == "vscode-settings"));
+    assert!(inspected.components.iter().any(|c| c.id == "tmux-conf"));
+    assert!(inspected.components.iter().any(|c| c.id == "htop"));
+    assert!(inspected
+        .components
+        .iter()
+        .all(|c| c.id != "ssh-id-ed25519"));
+    assert!(inspected.components.iter().all(|c| c.id != "google-chrome"));
 
     let inner = bundle.decrypt(PASSPHRASE).unwrap();
     let captured: Vec<String> = inner
@@ -108,6 +118,18 @@ fn fixture_home_round_trip_is_encrypted() {
     assert!(
         captured.iter().all(|b| !b.contains(EXCLUDED)),
         "excluded cache file leaked into payload"
+    );
+    assert!(
+        captured.iter().all(|b| !b.contains(SSH_PRIVATE)),
+        "ssh private key leaked into payload"
+    );
+    assert!(
+        captured.iter().all(|b| !b.contains(BROWSER)),
+        "browser data leaked into payload"
+    );
+    assert!(
+        captured.iter().all(|b| !b.contains(KEYCHAIN)),
+        "keychain data leaked into payload"
     );
 }
 

@@ -5,6 +5,8 @@
 //! ## Concepts
 //!
 //! - **Profile** (`profile.toml`): user-editable list of components with per-OS logical paths.
+//!   `cyclone init` / `profile --edit` scan `~/.config` and `~/` so any discovered
+//!   path can be added; SSH keys, keychains, browser data, and large caches stay opt-in.
 //! - **Image bundle**: directory containing `header.json` (KDF envelope) and
 //!   `bundle.bin.enc` (ChaCha20-Poly1305 ciphertext of the entire manifest + artifacts).
 //! - **Encryption**: Argon2id + a user-held passphrase; Cyclone never stores the key.
@@ -46,6 +48,7 @@ pub mod platform;
 pub mod profile;
 pub mod profiler;
 pub mod restore;
+pub mod scan;
 
 pub use artifacts::{ArtifactKind, CapturedArtifact, CapturedPayload};
 pub use bundle::{ImageBundle, ImageHeader, InnerBundle};
@@ -59,6 +62,10 @@ pub use inspect::{inspect, inspect_envelope, InspectReport};
 pub use manifest::{ImageManifest, ManifestComponent, SecretReference};
 pub use paths::{default_home, expand_tilde, mapped_dest, to_logical};
 pub use platform::{command_on_path, Platform};
-pub use profile::{ComponentKind, Profile, ProfileComponent, ProfilePaths};
-pub use profiler::{discover_defaults, run_profiler, CatalogEntry, ProfilerSession, CATALOG};
+pub use profile::{ComponentKind, OptInReason, Profile, ProfileComponent, ProfilePaths};
+pub use profiler::{
+    apply_selection_line, build_profile, discover_defaults, run_profiler, CatalogEntry,
+    ProfilerSession, CATALOG,
+};
 pub use restore::{restore, RestoreAction, RestoreActionKind, RestoreOptions, RestoreReport};
+pub use scan::{classify, scan_home, ScanHit};

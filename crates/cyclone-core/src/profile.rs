@@ -35,6 +35,33 @@ impl ComponentKind {
     }
 }
 
+/// Why a discovered path is left out of capture unless the profile opts in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OptInReason {
+    SshPrivateKey,
+    Keychain,
+    BrowserData,
+    LargeCache,
+}
+
+impl OptInReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SshPrivateKey => "ssh-private-key",
+            Self::Keychain => "keychain",
+            Self::BrowserData => "browser-data",
+            Self::LargeCache => "large-cache",
+        }
+    }
+}
+
+impl std::fmt::Display for OptInReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One capture unit with per-OS logical paths (`~/...`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileComponent {
@@ -48,6 +75,9 @@ pub struct ProfileComponent {
     pub macos: Option<String>,
     #[serde(default)]
     pub supported_platforms: Vec<Platform>,
+    /// Set when the scanner found this path but left it out by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opt_in: Option<OptInReason>,
 }
 
 fn default_true() -> bool {
@@ -166,6 +196,7 @@ mod tests {
                 linux: Some("~/.gitconfig".into()),
                 macos: Some("~/.gitconfig".into()),
                 supported_platforms: vec![Platform::Linux, Platform::MacOs],
+                opt_in: None,
             }],
             secret_references: vec![],
             notes: Some("test".into()),

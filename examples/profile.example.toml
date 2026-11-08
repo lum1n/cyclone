@@ -34,11 +34,29 @@ macos = "~/Brewfile"
 supported_platforms = ["linux", "macos"]
 
 [[components]]
+id = "tmux-conf"
+kind = "dotfile"
+include = true
+linux = "~/.tmux.conf"
+macos = "~/.tmux.conf"
+supported_platforms = ["linux", "macos"]
+
+[[components]]
 id = "apt-packages"
 kind = "tool-manifest"
 include = true
 linux = "~/.config/apt/packages.list"
 supported_platforms = ["linux"]
+
+# Discovered by the home scan; left out unless you opt in.
+[[components]]
+id = "ssh-id-ed25519"
+kind = "dotfile"
+include = false
+linux = "~/.ssh/id_ed25519"
+macos = "~/.ssh/id_ed25519"
+supported_platforms = ["linux", "macos"]
+opt_in = "ssh-private-key"
 
 [[secret_references]]
 name = "GITHUB_TOKEN"

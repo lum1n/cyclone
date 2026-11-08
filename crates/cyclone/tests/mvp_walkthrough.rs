@@ -40,7 +40,9 @@ fn init_capture_inspect_restore_walkthrough() {
         .arg("profile")
         .assert()
         .success()
-        .stdout(contains("gitconfig"));
+        .stdout(contains("gitconfig"))
+        .stdout(contains("tmux-conf"))
+        .stdout(contains("opt_in = \"ssh-private-key\""));
 
     cyclone()
         .env("XDG_CONFIG_HOME", &xdg)

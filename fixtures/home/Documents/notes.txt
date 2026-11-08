@@ -1,0 +1,1 @@
+This is not a dotfile and must not become a capture candidate.

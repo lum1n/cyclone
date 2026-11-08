@@ -27,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// First-run profiler: discover capture candidates and write an editable profile.
+    /// First-run profiler: scan ~/.config and ~/ , then write an editable profile.
     Init {
         /// Use discovered defaults only (CI / scripts).
         #[arg(long)]
@@ -42,7 +42,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// View or re-run the capture profile after init.
+    /// View or re-run the capture profile after init (re-scan of ~/.config and ~/).
     Profile {
         /// Re-run the profiler and overwrite the saved profile.
         #[arg(long)]
