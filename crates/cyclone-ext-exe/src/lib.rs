@@ -301,6 +301,8 @@ mod tests {
                 captured_at: "1970-01-01T00:00:00Z".into(),
                 host_platform: Platform::Linux,
                 host_arch: "x86_64".into(),
+                host_distro: None,
+                host_package_manager: None,
                 components: vec![
                     ManifestComponent {
                         id: "gitconfig".into(),
@@ -312,6 +314,7 @@ mod tests {
                         file_count: 1,
                         byte_size: 12,
                         supported_platforms: vec![Platform::Linux, Platform::MacOs],
+                        package_manager: None,
                     },
                     ManifestComponent {
                         id: "nvim".into(),
@@ -323,6 +326,7 @@ mod tests {
                         file_count: 1,
                         byte_size: 8,
                         supported_platforms: vec![Platform::Linux, Platform::MacOs],
+                        package_manager: None,
                     },
                 ],
                 secret_references: vec![],

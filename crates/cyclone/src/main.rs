@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use cyclone_core::{
     capture, inspect, inspect_envelope, restore, run_profiler, ApplyOptions, CaptureOptions,
-    CycloneError, Extension, ImageBundle, Platform, Profile, ProfilePaths, ProfilerSession,
+    CycloneError, Distro, Extension, ImageBundle, PackageCaptureMode, PackageCaptureOptions,
+    PackageManager, PackageRestoreOptions, Platform, Profile, ProfilePaths, ProfilerSession,
     ProvisionTarget, RestoreOptions, Result,
 };
 use cyclone_ext_exe::{ExeDevExtension, EXTENSION_NAME};
@@ -72,6 +73,9 @@ enum Commands {
         home: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
+        /// How to capture package managers: `auto` (file if present, else live dump), `files`, or `live`.
+        #[arg(long, default_value = "auto", env = "CYCLONE_PACKAGE_CAPTURE")]
+        packages: String,
         /// Low-memory Argon2id (tests only).
         #[arg(long, hide = true)]
         fast_kdf: bool,
@@ -102,6 +106,18 @@ enum Commands {
         /// Pretend the destination OS is linux or macos (for dry-run diffs).
         #[arg(long, value_name = "linux|macos")]
         assume_platform: Option<String>,
+        /// Pretend the destination distro is ubuntu, fedora, arch, alpine, opensuse, macos, …
+        #[arg(long, value_name = "DISTRO")]
+        assume_distro: Option<String>,
+        /// Pretend the destination package manager is homebrew, apt, dnf, pacman, apk, or zypper.
+        #[arg(long, value_name = "MANAGER")]
+        assume_manager: Option<String>,
+        /// Run the matching package manager's install command (default: yes unless --target-root).
+        #[arg(long)]
+        install_packages: bool,
+        /// Write declaration files only; do not invoke brew/apt/dnf/…
+        #[arg(long)]
+        no_install_packages: bool,
         #[arg(long, env = "CYCLONE_HOME")]
         home: Option<PathBuf>,
     },
@@ -162,8 +178,18 @@ fn run(command: Commands) -> Result<()> {
             key_file,
             home,
             dry_run,
+            packages,
             fast_kdf,
-        } => cmd_capture(profile, output, passphrase, key_file, home, dry_run, fast_kdf),
+        } => cmd_capture(
+            profile,
+            output,
+            passphrase,
+            key_file,
+            home,
+            dry_run,
+            packages,
+            fast_kdf,
+        ),
         Commands::Inspect {
             image,
             passphrase,
@@ -177,6 +203,10 @@ fn run(command: Commands) -> Result<()> {
             passphrase,
             key_file,
             assume_platform,
+            assume_distro,
+            assume_manager,
+            install_packages,
+            no_install_packages,
             home,
         } => cmd_restore(
             image,
@@ -186,6 +216,10 @@ fn run(command: Commands) -> Result<()> {
             passphrase,
             key_file,
             assume_platform,
+            assume_distro,
+            assume_manager,
+            install_packages,
+            no_install_packages,
             home,
         ),
         Commands::Push { image: _ } => Err(CycloneError::User(
@@ -274,6 +308,7 @@ fn cmd_profile(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_capture(
     profile_path: Option<PathBuf>,
     output: PathBuf,
@@ -281,6 +316,7 @@ fn cmd_capture(
     key_file: Option<PathBuf>,
     home: Option<PathBuf>,
     dry_run: bool,
+    packages: String,
     fast_kdf: bool,
 ) -> Result<()> {
     let paths = ProfilePaths::discover()?;
@@ -305,6 +341,11 @@ fn cmd_capture(
         platform: Platform::current()?,
         dry_run,
         fast_kdf,
+        packages: PackageCaptureOptions {
+            mode: packages.parse::<PackageCaptureMode>()?,
+            distro: None,
+            commands: Default::default(),
+        },
     })?;
     phrase.zeroize();
     writeln!(
@@ -346,6 +387,13 @@ fn cmd_inspect(
         report.host_platform,
         report.host_arch
     )?;
+    if let Some(distro) = &report.host_distro {
+        write!(io::stdout(), "distro: {distro}")?;
+        if let Some(pm) = &report.host_package_manager {
+            write!(io::stdout(), " ({pm})")?;
+        }
+        writeln!(io::stdout())?;
+    }
     writeln!(io::stdout(), "encryption: {} + {}", report.kdf, report.aead)?;
     writeln!(io::stdout(), "components: {}", report.component_count)?;
     for c in report.components {
@@ -382,16 +430,33 @@ fn cmd_restore(
     passphrase: Option<String>,
     key_file: Option<PathBuf>,
     assume_platform: Option<String>,
+    assume_distro: Option<String>,
+    assume_manager: Option<String>,
+    install_packages: bool,
+    no_install_packages: bool,
     home: Option<PathBuf>,
 ) -> Result<()> {
+    if install_packages && no_install_packages {
+        return Err(CycloneError::User(
+            "pass --install-packages or --no-install-packages, not both".into(),
+        ));
+    }
     let mut phrase = resolve_passphrase(passphrase, key_file, true)?;
     let dest_platform = match assume_platform {
         Some(s) => s.parse()?,
         None => Platform::current()?,
     };
+    let using_target_root = target_root.is_some();
     let dest_home = match target_root {
         Some(root) => root,
         None => resolve_home(home)?,
+    };
+    let install = if no_install_packages {
+        false
+    } else if install_packages {
+        true
+    } else {
+        !dry_run && !using_target_root
     };
     let report = restore(RestoreOptions {
         image: &image,
@@ -400,6 +465,15 @@ fn cmd_restore(
         dest_platform,
         dry_run,
         overwrite,
+        packages: PackageRestoreOptions {
+            distro: assume_distro.as_deref().map(Distro::from_id),
+            manager: assume_manager
+                .as_deref()
+                .map(|s| s.parse::<PackageManager>())
+                .transpose()?,
+            install,
+            commands: Default::default(),
+        },
     })?;
     phrase.zeroize();
     writeln!(

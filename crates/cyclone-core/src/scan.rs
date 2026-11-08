@@ -227,7 +227,9 @@ fn kind_for(abs: &Path, logical: &str) -> ComponentKind {
 
 fn is_tool_manifest_name(logical: &str) -> bool {
     let name = logical.rsplit('/').next().unwrap_or(logical);
-    name.eq_ignore_ascii_case("Brewfile") || name.eq_ignore_ascii_case("packages.list")
+    name.eq_ignore_ascii_case("Brewfile")
+        || name.eq_ignore_ascii_case("packages.list")
+        || (name.eq_ignore_ascii_case("world") && logical.contains("/apk/"))
 }
 
 /// Classify a logical path (`~/...` or relative) against the default exclusions.

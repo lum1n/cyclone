@@ -1,0 +1,6 @@
+# cyclone.package-manager: apt
+# cyclone.distro: ubuntu
+git=1:2.43.0-1ubuntu1
+curl=8.5.0-2ubuntu10
+build-essential
+ripgrep=14.1.0-1

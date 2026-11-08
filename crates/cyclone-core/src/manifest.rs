@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::packages::PackageManager;
 use crate::platform::Platform;
 use crate::profile::ComponentKind;
 
@@ -10,6 +11,10 @@ pub struct ImageManifest {
     pub captured_at: String,
     pub host_platform: Platform,
     pub host_arch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_distro: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_package_manager: Option<PackageManager>,
     pub components: Vec<ManifestComponent>,
     pub secret_references: Vec<SecretReference>,
     #[serde(default)]
@@ -31,6 +36,8 @@ pub struct ManifestComponent {
     pub byte_size: u64,
     #[serde(default)]
     pub supported_platforms: Vec<Platform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_manager: Option<PackageManager>,
 }
 
 impl ManifestComponent {
@@ -62,6 +69,8 @@ impl ImageManifest {
             captured_at: utc_now_rfc3339(),
             host_platform: Platform::current()?,
             host_arch: std::env::consts::ARCH.to_string(),
+            host_distro: None,
+            host_package_manager: None,
             components: Vec::new(),
             secret_references: Vec::new(),
             warnings: Vec::new(),

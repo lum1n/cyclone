@@ -10,6 +10,8 @@ pub struct InspectReport {
     pub schema_version: u32,
     pub host_platform: String,
     pub host_arch: String,
+    pub host_distro: Option<String>,
+    pub host_package_manager: Option<String>,
     pub captured_at: String,
     pub component_count: usize,
     pub components: Vec<ManifestComponent>,
@@ -34,6 +36,11 @@ pub fn inspect(image_path: &Path, passphrase: &str) -> Result<InspectReport> {
         schema_version: inner.manifest.schema_version,
         host_platform: inner.manifest.host_platform.as_str().to_string(),
         host_arch: inner.manifest.host_arch.clone(),
+        host_distro: inner.manifest.host_distro.clone(),
+        host_package_manager: inner
+            .manifest
+            .host_package_manager
+            .map(|m| m.as_str().to_string()),
         captured_at: inner.manifest.captured_at.clone(),
         component_count: inner.manifest.components.len(),
         components: inner.manifest.components.clone(),

@@ -52,7 +52,7 @@ export CYCLONE_PASSPHRASE='choose-a-strong-secret'   # same key as on A
 # Inspect requires the key. Secret *values* are never printed (names only).
 cyclone inspect ./dev-box.cyclone
 
-# Dry-run first: path mapping, creates vs overwrites, missing brew/apt, OS mismatches.
+# Dry-run first: path mapping, package-manager diffs, missing brew/apt, OS mismatches.
 cyclone restore ./dev-box.cyclone --dry-run
 
 # Apply into a sandbox (recommended the first time), then into $HOME when the diff looks right.
@@ -64,9 +64,11 @@ To preview a **Linux → macOS** (or the reverse) restore from either machine:
 
 ```bash
 cyclone restore ./dev-box.cyclone --dry-run --assume-platform macos
+# Distro/manager mismatches (e.g. a Brewfile on Ubuntu, or apt pins on Fedora):
+cyclone restore ./dev-box.cyclone --dry-run --assume-platform linux --assume-distro fedora --assume-manager dnf
 ```
 
-VS Code settings, for example, map `~/.config/Code/User/settings.json` (Linux) to `~/Library/Application Support/Code/User/settings.json` (macOS). Components that are not declared for the destination OS are skipped with an actionable hint (apt lists on macOS, missing `brew` on PATH, …).
+VS Code settings, for example, map `~/.config/Code/User/settings.json` (Linux) to `~/Library/Application Support/Code/User/settings.json` (macOS). Package declarations that do not match the destination manager are skipped with an **actionable diff** (package names that will not be installed, and whether to recapture on this distro).
 
 A representative fixture home used in CI lives at [`fixtures/home`](fixtures/home). It contains **no real secrets**.
 
@@ -109,9 +111,9 @@ Unlock with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`. Argon2id salt
 |---------|-------------|
 | `init` | First-run profiler; scans `~/.config` and `~/`, writes editable `profile.toml` |
 | `profile` | Print the saved profile; `--edit` re-scans and re-runs the profiler |
-| `capture` | Build an encrypted image (`--dry-run`) |
+| `capture` | Build an encrypted image (`--dry-run`, `--packages auto|files|live`) |
 | `inspect <path>` | Decrypt and summarize (secret names only) |
-| `restore <path>` | Decrypt and write artifacts (`--dry-run`, `--target-root`, `--overwrite`, `--assume-platform`) |
+| `restore <path>` | Decrypt, write artifacts, and install matching package declarations (`--dry-run`, `--target-root`, `--overwrite`, `--assume-platform`, `--assume-distro`, `--assume-manager`, `--install-packages` / `--no-install-packages`) |
 | `push` / `pull` | Registry transport — **not implemented**; copy the directory |
 | `provision --ext exe-dev` | Bootstrap an exe.dev VM from the encrypted image (**dry-run by default**; `--apply` calls the API) |
 
@@ -128,11 +130,41 @@ A small catalog still supplies stable ids and per-OS mappings for well-known too
 | `cargo-config` | `~/.cargo/config.toml` | same |
 | `vscode-settings` | `~/.config/Code/User/settings.json` | `~/Library/Application Support/Code/User/settings.json` |
 | `brewfile` | `~/Brewfile` | `~/Brewfile` |
-| `apt-packages` | `~/.config/apt/packages.list` | *(not supported)* |
+| `apt-packages` | `~/.config/apt/packages.list` | *(Linux only)* |
+| `dnf-packages` | `~/.config/dnf/packages.list` | *(Linux only)* |
+| `pacman-packages` | `~/.config/pacman/packages.list` | *(Linux only)* |
+| `apk-packages` | `~/.config/apk/world` | *(Linux only)* |
+| `zypper-packages` | `~/.config/zypper/packages.list` | *(Linux only)* |
 
 Extra files the scan finds (`.tmux.conf`, `~/.config/htop`, …) get generated ids and the same path on both OSes unless you edit the profile.
 
-**Listed, but not captured unless you opt in:** SSH private keys, keychains, browser profiles, and large caches (`~/.cache`, `node_modules`, `~/.cargo`, …). They appear in the profiler as opt-in rows (and as `opt_in = "…"` in `profile.toml`) so you can add them on purpose. Tooling is stored as **declarations** (Brewfile, apt list), not installed binaries. Restore writes those files; it does not run `brew bundle` or `apt-get`.
+**Listed, but not captured unless you opt in:** SSH private keys, keychains, browser profiles, and large caches (`~/.cache`, `node_modules`, `~/.cargo`, …). They appear in the profiler as opt-in rows (and as `opt_in = "…"` in `profile.toml`) so you can add them on purpose.
+
+## Package managers (supported vs warned)
+
+Cyclone captures **declarations** (Brewfile, apt/dnf/pacman/apk/zypper pins) — never installed binaries. Distro is read from `/etc/os-release`; Ubuntu is not assumed. Each manager keeps its own dump format and install command.
+
+| Host | Capture | Restore |
+|------|---------|---------|
+| macOS with Homebrew | Live `brew` dump, or `~/Brewfile` if you already have one | `brew bundle --file …` |
+| Debian/Ubuntu (`apt`) | Manual packages + versions (`apt-mark` / `dpkg-query`), or `~/.config/apt/packages.list` | `sudo apt-get install -y …` |
+| Fedora/RHEL (`dnf`) | User-installed NEVRAs, or `~/.config/dnf/packages.list` | `sudo dnf install -y …` |
+| Arch (`pacman`) | `pacman -Qe`, or `~/.config/pacman/packages.list` | `sudo pacman -S --needed --noconfirm …` |
+| Alpine (`apk`) | `/etc/apk/world` (or `apk info`), or `~/.config/apk/world` | `sudo apk add …` |
+| openSUSE (`zypper`) | Installed packages, or `~/.config/zypper/packages.list` | `sudo zypper --non-interactive install …` |
+
+`cyclone init` includes the **detected** manager even if you have not written a declaration file yet. `cyclone capture --packages live` always dumps from the live manager; `--packages files` reads only profile paths (used in tests).
+
+**Restore apply** runs the matching install command when you restore into `$HOME` (pass `--no-install-packages` to write the declaration file only). `--target-root` sandboxes files and does **not** install packages unless you also pass `--install-packages`.
+
+**Warned (dry-run prints an actionable diff, nothing is installed):**
+
+- Brewfile on a Linux host whose manager is apt/dnf/pacman/… (or the reverse)
+- apt pins on Fedora, pacman dump on Ubuntu, Alpine world on Debian, …
+- Matching manager but `brew` / `apt-get` / … missing from `PATH`
+- Component not declared for the destination OS (apt lists on macOS)
+
+Images stay **encrypted on local disk**. `push`/`pull` is not in this release.
 
 Secret **references** in the profile are names and providers only. Any secret *values* that happen to sit in a captured file live inside the encrypted payload, never in `header.json` or logs.
 

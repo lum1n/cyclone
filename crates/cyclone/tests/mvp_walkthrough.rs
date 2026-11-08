@@ -138,6 +138,27 @@ fn init_capture_inspect_restore_walkthrough() {
         .stdout(contains("Library/Application Support/Code"));
 
     cyclone()
+        .env("XDG_CONFIG_HOME", &xdg)
+        .env("CYCLONE_PASSPHRASE", PASSPHRASE)
+        .args([
+            "restore",
+            image_s,
+            "--dry-run",
+            "--assume-platform",
+            "linux",
+            "--assume-distro",
+            "fedora",
+            "--assume-manager",
+            "dnf",
+            "--target-root",
+            mac_home.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("dnf"))
+        .stdout(contains("recapture"));
+
+    cyclone()
         .args(["push", image_s])
         .assert()
         .failure()

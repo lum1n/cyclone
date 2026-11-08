@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::{CycloneError, Result};
 use crate::manifest::SecretReference;
+use crate::packages::{infer_package_manager, CommandProbe, HostEnv, PackageManager};
 use crate::paths::{expand_tilde, to_logical};
 use crate::platform::Platform;
 use crate::profile::{ComponentKind, OptInReason, Profile, ProfileComponent};
@@ -84,6 +85,34 @@ pub const CATALOG: &[CatalogEntry] = &[
         macos: None,
         platforms: &[Platform::Linux],
     },
+    CatalogEntry {
+        id: "dnf-packages",
+        kind: ComponentKind::ToolManifest,
+        linux: Some("~/.config/dnf/packages.list"),
+        macos: None,
+        platforms: &[Platform::Linux],
+    },
+    CatalogEntry {
+        id: "pacman-packages",
+        kind: ComponentKind::ToolManifest,
+        linux: Some("~/.config/pacman/packages.list"),
+        macos: None,
+        platforms: &[Platform::Linux],
+    },
+    CatalogEntry {
+        id: "apk-packages",
+        kind: ComponentKind::ToolManifest,
+        linux: Some("~/.config/apk/world"),
+        macos: None,
+        platforms: &[Platform::Linux],
+    },
+    CatalogEntry {
+        id: "zypper-packages",
+        kind: ComponentKind::ToolManifest,
+        linux: Some("~/.config/zypper/packages.list"),
+        macos: None,
+        platforms: &[Platform::Linux],
+    },
 ];
 
 /// First-run / edit profiler session.
@@ -110,6 +139,7 @@ pub fn build_profile(session: &ProfilerSession<'_>) -> Result<Profile> {
     let mut components = Vec::new();
     let mut used_ids = BTreeSet::new();
     let mut used_paths = BTreeSet::new();
+    let host = HostEnv::detect_for(session.platform, &CommandProbe::System).ok();
 
     let catalog_paths: Vec<String> = CATALOG
         .iter()
@@ -126,6 +156,13 @@ pub fn build_profile(session: &ProfilerSession<'_>) -> Result<Profile> {
             let abs = expand_tilde(&logical, session.home);
             component.include = abs.exists();
             used_paths.insert(logical);
+        }
+        if !component.include {
+            if let (Some(pm), Some(host)) = (component.package_manager, host.as_ref()) {
+                if host.manager == Some(pm) {
+                    component.include = true;
+                }
+            }
         }
         used_ids.insert(component.id.clone());
         components.push(component);
@@ -274,12 +311,13 @@ fn include_or_add_path(profile: &mut Profile, raw: &str, home: &Path) -> Result<
     let id = component_id_for(&logical, &used);
     let opt_in = crate::scan::classify(&logical);
     profile.components.push(ProfileComponent {
-        id,
+        id: id.clone(),
         kind,
         include: true,
         linux: Some(logical.clone()),
-        macos: Some(logical),
+        macos: Some(logical.clone()),
         supported_platforms: vec![Platform::Linux, Platform::MacOs],
+        package_manager: infer_package_manager(&id, Some(&logical), Some(&logical), None),
         opt_in,
     });
     Ok(())
@@ -293,6 +331,7 @@ fn catalog_component(entry: &CatalogEntry) -> ProfileComponent {
         linux: entry.linux.map(str::to_string),
         macos: entry.macos.map(str::to_string),
         supported_platforms: entry.platforms.to_vec(),
+        package_manager: PackageManager::from_component_id(entry.id),
         opt_in: None,
     }
 }
@@ -327,12 +366,13 @@ fn merge_scan_hit(
     used_ids.insert(id.clone());
     used_paths.insert(hit.logical.clone());
     components.push(ProfileComponent {
-        id,
+        id: id.clone(),
         kind: hit.kind,
         include,
         linux: Some(hit.logical.clone()),
-        macos: Some(hit.logical),
+        macos: Some(hit.logical.clone()),
         supported_platforms: vec![Platform::Linux, Platform::MacOs],
+        package_manager: infer_package_manager(&id, Some(&hit.logical), Some(&hit.logical), None),
         opt_in: hit.opt_in,
     });
 }
