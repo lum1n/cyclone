@@ -30,6 +30,9 @@ thiserror = "1"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# 2.12.x is MSRV-friendly when `url`/`idna` stay on the rustc 1.85 line in Cargo.lock
+# (newer `idna` pulls `icu` 2.4, which needs rustc 1.88).
+ureq = "2.12.1"
 zeroize = { version = "1", features = ["derive"] }
 
 cyclone-core = { path = "crates/cyclone-core" }

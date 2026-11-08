@@ -68,6 +68,28 @@ VS Code settings, for example, map `~/.config/Code/User/settings.json` (Linux) t
 
 A representative fixture home used in CI lives at [`fixtures/home`](fixtures/home). It contains **no real secrets**.
 
+## Walkthrough — provision an exe.dev VM
+
+Same encrypted image, different machine: decrypt locally, then bootstrap a VM. **Dry-run first** (that is also the default). Cloud HTTP lives in [`cyclone-ext-exe`](crates/cyclone-ext-exe); core stays SDK-free.
+
+```bash
+export CYCLONE_PASSPHRASE='choose-a-strong-secret'   # never sent to exe.dev
+
+# Plan only: decrypt the image, print POST /exec commands, write nothing.
+cyclone provision ./dev-box.cyclone --ext exe-dev --target my-vm
+cyclone provision ./dev-box.cyclone --ext exe-dev --target my-vm --dry-run
+
+# Apply: create or reuse the VM and restore Linux-mapped files under $HOME.
+# Mint a token (ssh is not in exe.dev's default --cmds):
+#   ssh exe.dev ssh-key generate-api-key --exp=30d --cmds=ls,new,ssh --label cyclone
+export EXE_TOKEN='…'   # official env var used by the exe.dev Python SDK
+cyclone provision ./dev-box.cyclone --ext exe-dev --target my-vm --apply
+```
+
+`EXE_TOKEN` is required only for `--apply`. There is no `--token` flag (argv shows up in `ps`). Optional `EXE_DEV_EXEC_URL` overrides `https://exe.dev/exec` for tests.
+
+Details, documented API mapping, and 64KiB `/exec` limits: [`crates/cyclone-ext-exe/README.md`](crates/cyclone-ext-exe/README.md).
+
 ## Image format
 
 An image is a **directory**. Every byte of user data is encrypted at rest. Plaintext images are not produced.
@@ -89,7 +111,7 @@ Unlock with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`. Argon2id salt
 | `inspect <path>` | Decrypt and summarize (secret names only) |
 | `restore <path>` | Decrypt and write artifacts (`--dry-run`, `--target-root`, `--overwrite`, `--assume-platform`) |
 | `push` / `pull` | Registry transport — **not implemented**; copy the directory |
-| `provision --ext exe` | Plan/apply VM bootstrap via an extension (exe.dev is a stub) |
+| `provision --ext exe-dev` | Bootstrap an exe.dev VM from the encrypted image (**dry-run by default**; `--apply` calls the API) |
 
 ## What is captured
 
@@ -114,7 +136,7 @@ Secret **references** in the profile are names and providers only. Any secret *v
 |-------|------|
 | [`cyclone`](crates/cyclone) | CLI |
 | [`cyclone-core`](crates/cyclone-core) | Profiles, capture/restore, whole-image encryption, `Extension` trait |
-| [`cyclone-ext-exe`](crates/cyclone-ext-exe) | exe.dev provisioning adapter (plan/apply stubs) |
+| [`cyclone-ext-exe`](crates/cyclone-ext-exe) | exe.dev VM bootstrap (`--ext exe-dev`) |
 
 Run `cargo test --workspace` and `cargo doc --workspace --open` from the repo root.
 

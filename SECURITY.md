@@ -33,3 +33,4 @@ Out of scope: third-party cloud providers implemented in extension crates unless
 - Passphrases are provided with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`.
 - Cyclone does not escrow keys. An image without the user-held key cannot be decrypted.
 - Do not commit passphrases, key files, or decrypted bundles.
+- `cyclone provision --apply` reads `EXE_TOKEN` (exe.dev bearer token; the same name the official Python SDK uses). Cyclone does not log it, does not accept it as a CLI flag, and does not send `CYCLONE_PASSPHRASE` to exe.dev. The image is decrypted locally; only restored file bytes go to the VM you named.

@@ -1,0 +1,13 @@
+{
+  "vms": [
+    {
+      "https_url": "https://dev-box.exe.xyz",
+      "region": "lon",
+      "region_display": "London, UK",
+      "ssh_dest": "dev-box.exe.xyz",
+      "ssh_host": "dev-box.exe.xyz",
+      "status": "running",
+      "vm_name": "dev-box"
+    }
+  ]
+}

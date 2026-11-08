@@ -1,0 +1,8 @@
+{
+  "vm_name": "dev-box",
+  "https_url": "https://dev-box.exe.xyz",
+  "ssh_dest": "dev-box.exe.xyz",
+  "ssh_host": "dev-box.exe.xyz",
+  "status": "running",
+  "region": "lon"
+}

@@ -5,11 +5,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use cyclone_core::{
-    capture, inspect, inspect_envelope, restore, run_profiler, CaptureOptions, CycloneError,
-    Extension, ImageBundle, Platform, Profile, ProfilePaths, ProfilerSession, ProvisionTarget,
-    RestoreOptions, Result,
+    capture, inspect, inspect_envelope, restore, run_profiler, ApplyOptions, CaptureOptions,
+    CycloneError, Extension, ImageBundle, Platform, Profile, ProfilePaths, ProfilerSession,
+    ProvisionTarget, RestoreOptions, Result,
 };
-use cyclone_ext_exe::ExeDevExtension;
+use cyclone_ext_exe::{ExeDevExtension, EXTENSION_NAME};
 use tracing_subscriber::EnvFilter;
 use zeroize::Zeroize;
 
@@ -109,15 +109,21 @@ enum Commands {
     Push { image: PathBuf },
     /// Download an image from a registry (not implemented in this release).
     Pull { spec: String },
-    /// Provision a remote target via an extension (exe.dev is a stub).
+    /// Bootstrap a remote VM from an encrypted image (dry-run by default).
     Provision {
         image: PathBuf,
-        #[arg(long, default_value = "exe")]
+        /// Extension id. First cloud adapter: `exe-dev`.
+        #[arg(long, default_value = "exe-dev")]
         ext: String,
+        /// exe.dev VM name (lowercase DNS label).
         #[arg(long)]
         target: String,
+        /// Print the plan only (also the default when `--apply` is omitted).
         #[arg(long)]
         dry_run: bool,
+        /// Call exe.dev and restore files onto the VM.
+        #[arg(long)]
+        apply: bool,
         #[arg(long, env = "CYCLONE_PASSPHRASE")]
         passphrase: Option<String>,
         #[arg(long)]
@@ -193,9 +199,10 @@ fn run(command: Commands) -> Result<()> {
             ext,
             target,
             dry_run,
+            apply,
             passphrase,
             key_file,
-        } => cmd_provision(image, ext, target, dry_run, passphrase, key_file),
+        } => cmd_provision(image, ext, target, dry_run, apply, passphrase, key_file),
     }
 }
 
@@ -417,30 +424,59 @@ fn cmd_provision(
     image: PathBuf,
     ext: String,
     target: String,
-    dry_run: bool,
+    dry_run_flag: bool,
+    apply_flag: bool,
     passphrase: Option<String>,
     key_file: Option<PathBuf>,
 ) -> Result<()> {
-    if ext != "exe" {
+    if dry_run_flag && apply_flag {
+        return Err(CycloneError::User(
+            "pass --dry-run or --apply, not both".into(),
+        ));
+    }
+    let dry_run = !apply_flag;
+    if ext != EXTENSION_NAME {
         return Err(CycloneError::User(format!(
-            "unknown extension `{ext}` (supported: exe)"
+            "unknown extension `{ext}` (supported: {EXTENSION_NAME})"
         )));
     }
     let mut phrase = resolve_passphrase(passphrase, key_file, true)?;
     let bundle = ImageBundle::open(&image)?;
+    writeln!(
+        io::stdout(),
+        "encrypted image: {} + {}",
+        bundle.header.kdf.algorithm,
+        bundle.header.aead
+    )?;
     let inner = bundle.decrypt(&phrase)?;
     phrase.zeroize();
-    let extension = ExeDevExtension::new();
-    let plan = extension.plan(
-        &inner.manifest,
-        &ProvisionTarget {
-            id: target,
-            labels: vec![],
-        },
+    let extension = if dry_run {
+        ExeDevExtension::new()
+    } else {
+        ExeDevExtension::from_env()?
+    };
+    let target = ProvisionTarget {
+        id: target,
+        labels: vec![],
+    };
+    let plan = extension.plan(&inner, &target)?;
+    writeln!(
+        io::stdout(),
+        "provision plan ({EXTENSION_NAME} → VM `{}`, {} steps):",
+        plan.target.id,
+        plan.steps.len()
     )?;
-    let log = extension.apply(&plan, dry_run)?;
-    for line in log {
-        writeln!(io::stdout(), "{line}")?;
+    for step in &plan.steps {
+        writeln!(io::stdout(), "  - {}: {}", step.action, step.detail)?;
+    }
+    let result = extension.apply(&inner, &target, &ApplyOptions { dry_run })?;
+    writeln!(
+        io::stdout(),
+        "provision {}",
+        if result.dry_run { "dry-run" } else { "ok" }
+    )?;
+    for line in result.log {
+        writeln!(io::stdout(), "  {line}")?;
     }
     Ok(())
 }
