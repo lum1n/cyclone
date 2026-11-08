@@ -1,0 +1,4 @@
+# Homebrew declarations (captured as metadata, not installed)
+brew "git"
+brew "ripgrep"
+brew "neovim"

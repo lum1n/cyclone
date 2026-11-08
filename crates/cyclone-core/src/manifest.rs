@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::platform::Platform;
+use crate::profile::ComponentKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageManifest {
@@ -17,19 +18,40 @@ pub struct ImageManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ManifestComponent {
-    pub name: String,
-    pub kind: String,
-    pub source_path: String,
+    pub id: String,
+    pub kind: ComponentKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macos: Option<String>,
+    /// Logical path (`~/...`) used on the capture host.
+    pub captured_path: String,
     pub content_sha256: String,
+    pub file_count: usize,
+    pub byte_size: u64,
     #[serde(default)]
     pub supported_platforms: Vec<Platform>,
 }
 
+impl ManifestComponent {
+    pub fn path_for(&self, platform: Platform) -> Option<&str> {
+        match platform {
+            Platform::Linux => self.linux.as_deref(),
+            Platform::MacOs => self.macos.as_deref(),
+        }
+    }
+
+    pub fn supports(&self, platform: Platform) -> bool {
+        self.supported_platforms.is_empty() || self.supported_platforms.contains(&platform)
+    }
+}
+
+/// Secret *names* and providers only — never values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretReference {
     pub name: String,
     pub provider: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_hint: Option<String>,
 }
 

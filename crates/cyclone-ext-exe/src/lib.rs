@@ -1,6 +1,6 @@
 //! # cyclone-ext-exe
 //!
-//! Extension crate that maps a Cyclone [`ImageManifest`](cyclone_core::ImageManifest) to
+//! Extension crate that maps a Cyclone [`ImageManifest`] to
 //! exe.dev VM provisioning steps via [`cyclone_core::Extension`].
 //!
 //! Today this crate implements **plan/apply orchestration only** (no exe.dev API calls yet).

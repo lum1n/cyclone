@@ -25,6 +25,7 @@ Be respectful and constructive in issues and PRs.
 - **`crates/cyclone-core`** — Library used by the CLI and extensions. No cloud SDKs.
 - **`crates/cyclone`** — `clap`-based binary; keep it thin (parse args, call core).
 - **`crates/cyclone-ext-*`** — Optional adapters implementing `cyclone_core::Extension`.
+- **`fixtures/home`** — Fake `$HOME` for Linux CI (dotfiles + tool lists, **no real secrets**).
 
 ## Pull request checklist
 

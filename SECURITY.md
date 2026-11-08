@@ -20,10 +20,16 @@ We will acknowledge receipt and work on a fix. We appreciate responsible disclos
 
 ## Scope
 
-Cyclone handles local filesystem paths and user-supplied passphrases. Report issues involving:
+Cyclone handles local filesystem paths and user-supplied passphrases. Images are **encrypted at rest in full** (Argon2id + ChaCha20-Poly1305). Report issues involving:
 
-- Secret material leaking into images, logs, or manifests
-- Cryptographic misuse in `cyclone-core`
+- Secret material leaking into images, logs, `header.json`, or the git repository
+- Cryptographic misuse in `cyclone-core` (KDF, AEAD, key lifetime)
 - Unsafe restore behavior (overwrites outside declared targets)
 
 Out of scope: third-party cloud providers implemented in extension crates unless the bug is in core’s extension API contract.
+
+## Key handling
+
+- Passphrases are provided with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`.
+- Cyclone does not escrow keys. An image without the user-held key cannot be decrypted.
+- Do not commit passphrases, key files, or decrypted bundles.
