@@ -25,6 +25,10 @@ pub enum PackageManager {
     Apt,
     Dnf,
     Pacman,
+    /// Arch User Repository helper (`yay`). Captured separately from official pacman repos.
+    Yay,
+    /// Arch User Repository helper (`paru`). Captured separately from official pacman repos.
+    Paru,
     Apk,
     Zypper,
 }
@@ -36,6 +40,8 @@ impl PackageManager {
             Self::Apt => "apt",
             Self::Dnf => "dnf",
             Self::Pacman => "pacman",
+            Self::Yay => "yay",
+            Self::Paru => "paru",
             Self::Apk => "apk",
             Self::Zypper => "zypper",
         }
@@ -47,6 +53,8 @@ impl PackageManager {
             Self::Apt => "apt",
             Self::Dnf => "dnf",
             Self::Pacman => "pacman",
+            Self::Yay => "yay",
+            Self::Paru => "paru",
             Self::Apk => "apk",
             Self::Zypper => "zypper",
         }
@@ -59,6 +67,8 @@ impl PackageManager {
             Self::Apt => "apt-get",
             Self::Dnf => "dnf",
             Self::Pacman => "pacman",
+            Self::Yay => "yay",
+            Self::Paru => "paru",
             Self::Apk => "apk",
             Self::Zypper => "zypper",
         }
@@ -70,6 +80,8 @@ impl PackageManager {
             Self::Apt => "apt-packages",
             Self::Dnf => "dnf-packages",
             Self::Pacman => "pacman-packages",
+            Self::Yay => "yay-packages",
+            Self::Paru => "paru-packages",
             Self::Apk => "apk-packages",
             Self::Zypper => "zypper-packages",
         }
@@ -81,6 +93,8 @@ impl PackageManager {
             Self::Apt => "~/.config/apt/packages.list",
             Self::Dnf => "~/.config/dnf/packages.list",
             Self::Pacman => "~/.config/pacman/packages.list",
+            Self::Yay => "~/.config/yay/packages.list",
+            Self::Paru => "~/.config/paru/packages.list",
             Self::Apk => "~/.config/apk/world",
             Self::Zypper => "~/.config/zypper/packages.list",
         }
@@ -93,9 +107,14 @@ impl PackageManager {
         }
     }
 
-    /// Privilege needed to install (Homebrew is typically user-scoped).
+    /// Privilege needed to install (Homebrew and AUR helpers sudo internally).
     pub fn install_needs_root(self) -> bool {
-        !matches!(self, Self::Homebrew)
+        !matches!(self, Self::Homebrew | Self::Yay | Self::Paru)
+    }
+
+    /// `yay` / `paru` — AUR helpers, not the official pacman repos.
+    pub fn is_aur_helper(self) -> bool {
+        matches!(self, Self::Yay | Self::Paru)
     }
 
     pub fn from_component_id(id: &str) -> Option<Self> {
@@ -104,6 +123,8 @@ impl PackageManager {
             "apt-packages" | "apt" => Some(Self::Apt),
             "dnf-packages" | "dnf" | "yum-packages" | "yum" => Some(Self::Dnf),
             "pacman-packages" | "pacman" => Some(Self::Pacman),
+            "yay-packages" | "yay" => Some(Self::Yay),
+            "paru-packages" | "paru" => Some(Self::Paru),
             "apk-packages" | "apk" => Some(Self::Apk),
             "zypper-packages" | "zypper" => Some(Self::Zypper),
             _ => None,
@@ -124,6 +145,12 @@ impl PackageManager {
         if path.contains("/pacman/") {
             return Some(Self::Pacman);
         }
+        if path.contains("/yay/") {
+            return Some(Self::Yay);
+        }
+        if path.contains("/paru/") {
+            return Some(Self::Paru);
+        }
         if path.contains("/apk/") || name.eq_ignore_ascii_case("world") && path.contains("apk") {
             return Some(Self::Apk);
         }
@@ -139,6 +166,8 @@ impl PackageManager {
             Self::Apt => commands.has("apt-get") || commands.has("apt"),
             Self::Dnf => commands.has("dnf") || commands.has("yum"),
             Self::Pacman => commands.has("pacman"),
+            Self::Yay => commands.has("yay"),
+            Self::Paru => commands.has("paru"),
             Self::Apk => commands.has("apk"),
             Self::Zypper => commands.has("zypper"),
         }
@@ -160,10 +189,12 @@ impl FromStr for PackageManager {
             "apt" | "apt-get" | "dpkg" => Ok(Self::Apt),
             "dnf" | "yum" => Ok(Self::Dnf),
             "pacman" => Ok(Self::Pacman),
+            "yay" => Ok(Self::Yay),
+            "paru" => Ok(Self::Paru),
             "apk" => Ok(Self::Apk),
             "zypper" => Ok(Self::Zypper),
             _ => Err(CycloneError::User(format!(
-                "unknown package manager `{s}` (homebrew, apt, dnf, pacman, apk, zypper)"
+                "unknown package manager `{s}` (homebrew, apt, dnf, pacman, yay, paru, apk, zypper)"
             ))),
         }
     }
@@ -196,6 +227,7 @@ impl PackageSpec {
                 Some(v) => format!("{}={}", self.name, v),
                 None => self.name.clone(),
             },
+            PackageManager::Yay | PackageManager::Paru => self.name.clone(),
             PackageManager::Dnf => match &self.version {
                 Some(v) => format!("{}-{}", self.name, v),
                 None => self.name.clone(),
@@ -294,6 +326,8 @@ pub struct HostEnv {
     pub platform: Platform,
     pub distro: Distro,
     pub manager: Option<PackageManager>,
+    /// `yay` / `paru` on PATH. Not a substitute for pacman; AUR is captured separately.
+    pub aur_helpers: Vec<PackageManager>,
 }
 
 impl HostEnv {
@@ -312,6 +346,7 @@ impl HostEnv {
             platform,
             distro,
             manager,
+            aur_helpers: detect_aur_helpers(commands),
         })
     }
 
@@ -337,6 +372,7 @@ impl HostEnv {
             platform,
             distro,
             manager,
+            aur_helpers: detect_aur_helpers(commands),
         }
     }
 
@@ -344,6 +380,10 @@ impl HostEnv {
         self.manager
             .map(|m| m.present_on(commands))
             .unwrap_or(false)
+    }
+
+    pub fn has_helper(&self, pm: PackageManager) -> bool {
+        self.aur_helpers.contains(&pm)
     }
 }
 
@@ -385,6 +425,17 @@ pub fn preferred_manager(distro: &Distro) -> Option<PackageManager> {
         }
     }
     None
+}
+
+pub fn is_arch_family(distro: &Distro) -> bool {
+    matches!(preferred_manager(distro), Some(PackageManager::Pacman))
+}
+
+fn detect_aur_helpers(commands: &CommandProbe) -> Vec<PackageManager> {
+    [PackageManager::Yay, PackageManager::Paru]
+        .into_iter()
+        .filter(|pm| pm.present_on(commands))
+        .collect()
 }
 
 fn detect_manager(
@@ -565,6 +616,8 @@ pub fn dump_live(
         PackageManager::Apt => dump_apt(commands)?,
         PackageManager::Dnf => dump_dnf(commands)?,
         PackageManager::Pacman => dump_pacman(commands)?,
+        PackageManager::Yay => dump_aur_helper("yay", commands)?,
+        PackageManager::Paru => dump_aur_helper("paru", commands)?,
         PackageManager::Apk => dump_apk(commands)?,
         PackageManager::Zypper => dump_zypper(commands)?,
     };
@@ -633,7 +686,7 @@ pub fn render_declaration(
                 }
             }
         }
-        PackageManager::Pacman => {
+        PackageManager::Pacman | PackageManager::Yay | PackageManager::Paru => {
             for p in packages {
                 match &p.version {
                     Some(v) => out.push_str(&format!("{} {v}\n", p.name)),
@@ -656,7 +709,9 @@ pub fn render_declaration(
 fn parse_body(manager: PackageManager, body: &str) -> Vec<PackageSpec> {
     match manager {
         PackageManager::Homebrew => parse_brewfile(body),
-        PackageManager::Pacman => parse_name_version_lines(body, ' '),
+        PackageManager::Pacman | PackageManager::Yay | PackageManager::Paru => {
+            parse_name_version_lines(body, ' ')
+        }
         _ => parse_name_eq_lines(body),
     }
 }
@@ -852,8 +907,26 @@ fn dump_dnf(commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
 }
 
 fn dump_pacman(commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
-    let body = commands.output("pacman", &["-Qe"])?;
+    // When an AUR helper is present, official repo packages only (`-n`).
+    // Otherwise keep all explicit packages (`-Qe`) so foreign pkgs are not dropped.
+    let args: &[&str] =
+        if PackageManager::Yay.present_on(commands) || PackageManager::Paru.present_on(commands) {
+            &["-Qne"]
+        } else {
+            &["-Qe"]
+        };
+    let body = commands.output("pacman", args)?;
     Ok(parse_name_version_lines(&body, ' '))
+}
+
+fn dump_aur_helper(program: &str, commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
+    // Explicitly installed foreign packages (AUR / local), not official repos.
+    let body = commands.output(program, &["-Qme"])?;
+    let mut packages = parse_name_version_lines(&body, ' ');
+    for p in &mut packages {
+        p.kind = Some("aur".into());
+    }
+    Ok(packages)
 }
 
 fn dump_apk(commands: &CommandProbe) -> Result<Vec<PackageSpec>> {
@@ -953,6 +1026,16 @@ pub fn install_invocation(
             args.extend(install_tokens(manager, packages));
             ("pacman".into(), args)
         }
+        PackageManager::Yay => {
+            let mut args = vec!["-S".into(), "--needed".into(), "--noconfirm".into()];
+            args.extend(install_tokens(manager, packages));
+            ("yay".into(), args)
+        }
+        PackageManager::Paru => {
+            let mut args = vec!["-S".into(), "--needed".into(), "--noconfirm".into()];
+            args.extend(install_tokens(manager, packages));
+            ("paru".into(), args)
+        }
         PackageManager::Apk => {
             let mut args = vec!["add".into()];
             args.extend(install_tokens(manager, packages));
@@ -1016,6 +1099,17 @@ pub fn mismatch_detail(captured: &PackageDeclaration, dest: &HostEnv) -> String 
         .map(PackageManager::display_name)
         .unwrap_or("no matching package manager");
     let names = summarize_names(&captured.packages);
+    if captured.manager.is_aur_helper() {
+        return format!(
+            "{} AUR packages captured on {} cannot be applied on {} ({}); \
+need an Arch-family host with {}; skipped packages: {names}",
+            captured.manager.display_name(),
+            captured.distro_id,
+            dest.distro.id,
+            dest_mgr,
+            captured.manager.command()
+        );
+    }
     format!(
         "{} declarations captured on {} cannot be applied with {dest_mgr} on {}; \
 recapture on this distro, or restore on a host with {}; skipped packages: {names}",
@@ -1023,6 +1117,17 @@ recapture on this distro, or restore on a host with {}; skipped packages: {names
         captured.distro_id,
         dest.distro.id,
         captured.manager.display_name()
+    )
+}
+
+pub fn missing_aur_helper_detail(captured: &PackageDeclaration, dest: &HostEnv) -> String {
+    format!(
+        "{} is not on PATH on {} ({}); AUR packages cannot be applied without {}. packages: {}",
+        captured.manager.command(),
+        dest.platform,
+        dest.distro.id,
+        captured.manager.command(),
+        summarize_names(&captured.packages)
     )
 }
 
@@ -1070,6 +1175,8 @@ pub fn catalog_managers() -> &'static [PackageManager] {
         PackageManager::Apt,
         PackageManager::Dnf,
         PackageManager::Pacman,
+        PackageManager::Yay,
+        PackageManager::Paru,
         PackageManager::Apk,
         PackageManager::Zypper,
     ]
@@ -1151,6 +1258,16 @@ mod tests {
         );
         assert_eq!(zypper.distro_id, "opensuse-tumbleweed");
         assert!(zypper.packages.iter().any(|p| p.name == "curl"));
+
+        let yay = parse_declaration(PackageManager::Yay, "linux", &read_fixture("yay.list"));
+        assert_eq!(yay.distro_id, "arch");
+        assert!(yay
+            .packages
+            .iter()
+            .any(|p| p.name == "visual-studio-code-bin"));
+        let paru = parse_declaration(PackageManager::Paru, "linux", &read_fixture("paru.list"));
+        assert_eq!(paru.distro_id, "arch");
+        assert!(paru.packages.iter().any(|p| p.name == "google-chrome"));
     }
 
     #[test]
@@ -1207,6 +1324,7 @@ mod tests {
             platform: Platform::Linux,
             distro: Distro::from_id("ubuntu"),
             manager: Some(PackageManager::Apt),
+            aur_helpers: Vec::new(),
         };
         let detail = mismatch_detail(&captured, &dest);
         assert!(detail.contains("Homebrew"));
@@ -1233,6 +1351,60 @@ mod tests {
         assert_eq!(brew, "brew bundle --file /tmp/Brewfile");
         let pacman = install_command_line(PackageManager::Pacman, &pkgs, None, true);
         assert!(pacman.contains("pacman -S --needed --noconfirm git=2.47.0"));
+        let yay = install_command_line(PackageManager::Yay, &pkgs, None, false);
+        assert_eq!(yay, "yay -S --needed --noconfirm git");
+        let paru = install_command_line(PackageManager::Paru, &pkgs, None, false);
+        assert_eq!(paru, "paru -S --needed --noconfirm git");
+    }
+
+    #[test]
+    fn live_dump_splits_official_pacman_from_aur_helper() {
+        let commands = CommandProbe::Scripted(
+            ScriptedCommands::new()
+                .allow("pacman")
+                .allow("yay")
+                .stdout("pacman", &["-Qne"], "git 2.47.0-1\nripgrep 14.1.1-1\n")
+                .stdout(
+                    "yay",
+                    &["-Qme"],
+                    "visual-studio-code-bin 1.95.3-1\nspotify 1:1.2.52-1\n",
+                ),
+        );
+        let distro = Distro::from_id("arch");
+        let official = dump_live(PackageManager::Pacman, &distro, &commands)
+            .unwrap()
+            .expect("pacman dump");
+        assert!(official.packages.iter().any(|p| p.name == "git"));
+        assert!(official
+            .packages
+            .iter()
+            .all(|p| p.name != "visual-studio-code-bin"));
+
+        let aur = dump_live(PackageManager::Yay, &distro, &commands)
+            .unwrap()
+            .expect("yay dump");
+        assert!(aur
+            .packages
+            .iter()
+            .any(|p| p.name == "visual-studio-code-bin"));
+        assert!(aur.packages.iter().all(|p| p.name != "git"));
+        assert!(aur.body.contains("# cyclone.package-manager: yay"));
+    }
+
+    #[test]
+    fn aur_mismatch_on_non_arch_names_helper() {
+        let captured = parse_declaration(PackageManager::Yay, "arch", &read_fixture("yay.list"));
+        let dest = HostEnv {
+            platform: Platform::Linux,
+            distro: Distro::from_id("ubuntu"),
+            manager: Some(PackageManager::Apt),
+            aur_helpers: Vec::new(),
+        };
+        let detail = mismatch_detail(&captured, &dest);
+        assert!(detail.contains("AUR"));
+        assert!(detail.contains("yay"));
+        assert!(detail.contains("ubuntu"));
+        assert!(detail.contains("visual-studio-code-bin"));
     }
 
     #[test]

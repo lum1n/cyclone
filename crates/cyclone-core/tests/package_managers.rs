@@ -109,6 +109,22 @@ fn fixture_lists_capture_and_restore_per_manager() {
             "arch",
         ),
         (
+            "yay.list",
+            ".config/yay/packages.list",
+            "yay-packages",
+            PackageManager::Yay,
+            Platform::Linux,
+            "arch",
+        ),
+        (
+            "paru.list",
+            ".config/paru/packages.list",
+            "paru-packages",
+            PackageManager::Paru,
+            Platform::Linux,
+            "arch",
+        ),
+        (
             "apk.world",
             ".config/apk/world",
             "apk-packages",
@@ -155,6 +171,8 @@ fn fixture_lists_capture_and_restore_per_manager() {
             PackageManager::Apt => ScriptedCommands::new().allow("apt-get").allow("apt"),
             PackageManager::Dnf => ScriptedCommands::new().allow("dnf"),
             PackageManager::Pacman => ScriptedCommands::new().allow("pacman"),
+            PackageManager::Yay => ScriptedCommands::new().allow("yay"),
+            PackageManager::Paru => ScriptedCommands::new().allow("paru"),
             PackageManager::Apk => ScriptedCommands::new().allow("apk"),
             PackageManager::Zypper => ScriptedCommands::new().allow("zypper"),
         };
@@ -180,8 +198,15 @@ fn fixture_lists_capture_and_restore_per_manager() {
             "{id} missing WouldInstall: {:?}",
             dry.planned_actions
         );
+        let needle = if manager.is_aur_helper() {
+            "visual-studio-code-bin"
+        } else {
+            "git"
+        };
         assert!(
-            dry.planned_actions.iter().any(|a| a.detail.contains("git")),
+            dry.planned_actions
+                .iter()
+                .any(|a| a.detail.contains(needle)),
             "{id} dry-run should name packages: {:?}",
             dry.planned_actions
         );
@@ -203,7 +228,7 @@ fn fixture_lists_capture_and_restore_per_manager() {
         .unwrap();
         let restored = std::fs::read_to_string(dest.join(rel)).unwrap();
         assert!(
-            restored.contains("git"),
+            restored.contains(needle),
             "{id} declaration should be written"
         );
         let ran = scripted.ran();
@@ -373,4 +398,136 @@ fn live_apt_dump_uses_scripted_host_not_fat_binaries() {
     assert!(body.contains("ripgrep=14.1.0"));
     assert!(body.contains("# cyclone.package-manager: apt"));
     assert!(!body.contains("\0"), "must store text, not binaries");
+}
+
+fn capture_yay_image(dir: &Path) -> PathBuf {
+    let home = dir.join("home");
+    let body = std::fs::read_to_string(fixtures().join("yay.list")).unwrap();
+    write_home_file(&home, ".config/yay/packages.list", &body);
+    let profile = profile_one(
+        "yay-packages",
+        "~/.config/yay/packages.list",
+        None,
+        PackageManager::Yay,
+        vec![Platform::Linux],
+    );
+    let image = dir.join("img.cyclone");
+    capture_list(
+        &home,
+        &image,
+        &profile,
+        Platform::Linux,
+        Distro::from_id("arch"),
+        CommandProbe::System,
+        PackageCaptureMode::Files,
+    );
+    image
+}
+
+#[test]
+fn aur_yay_on_ubuntu_cannot_be_applied() {
+    let dir = tempdir().unwrap();
+    let image = capture_yay_image(dir.path());
+    let dry = restore(RestoreOptions {
+        image: &image,
+        passphrase: PASSPHRASE,
+        dest_home: dir.path().join("ubuntu"),
+        dest_platform: Platform::Linux,
+        dry_run: true,
+        overwrite: false,
+        packages: PackageRestoreOptions {
+            distro: Some(Distro::from_id("ubuntu")),
+            manager: Some(PackageManager::Apt),
+            install: false,
+            commands: CommandProbe::Scripted(ScriptedCommands::new().allow("yay")),
+        },
+    })
+    .unwrap();
+    let mismatch = dry
+        .planned_actions
+        .iter()
+        .find(|a| {
+            a.component_id == "yay-packages" && a.kind == RestoreActionKind::SkipManagerMismatch
+        })
+        .unwrap_or_else(|| panic!("{:?}", dry.planned_actions));
+    assert!(mismatch.detail.contains("AUR"));
+    assert!(mismatch.detail.contains("ubuntu"));
+    assert!(mismatch.detail.contains("visual-studio-code-bin"));
+}
+
+#[test]
+fn aur_yay_on_arch_without_helper_cannot_be_applied() {
+    let dir = tempdir().unwrap();
+    let image = capture_yay_image(dir.path());
+    let dry = restore(RestoreOptions {
+        image: &image,
+        passphrase: PASSPHRASE,
+        dest_home: dir.path().join("arch"),
+        dest_platform: Platform::Linux,
+        dry_run: true,
+        overwrite: false,
+        packages: PackageRestoreOptions {
+            distro: Some(Distro::from_id("arch")),
+            manager: Some(PackageManager::Pacman),
+            install: false,
+            commands: CommandProbe::Scripted(ScriptedCommands::new().allow("pacman")),
+        },
+    })
+    .unwrap();
+    let missing = dry
+        .planned_actions
+        .iter()
+        .find(|a| a.component_id == "yay-packages" && a.kind == RestoreActionKind::SkipMissingTool)
+        .unwrap_or_else(|| panic!("{:?}", dry.planned_actions));
+    assert!(missing.detail.contains("AUR"));
+    assert!(missing.detail.contains("yay"));
+    assert!(missing.detail.contains("visual-studio-code-bin"));
+}
+
+#[test]
+fn aur_paru_on_arch_with_helper_would_install() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    let body = std::fs::read_to_string(fixtures().join("paru.list")).unwrap();
+    write_home_file(&home, ".config/paru/packages.list", &body);
+    let profile = profile_one(
+        "paru-packages",
+        "~/.config/paru/packages.list",
+        None,
+        PackageManager::Paru,
+        vec![Platform::Linux],
+    );
+    let image = dir.path().join("img.cyclone");
+    capture_list(
+        &home,
+        &image,
+        &profile,
+        Platform::Linux,
+        Distro::from_id("arch"),
+        CommandProbe::System,
+        PackageCaptureMode::Files,
+    );
+    let scripted = ScriptedCommands::new().allow("paru").allow("pacman");
+    let dry = restore(RestoreOptions {
+        image: &image,
+        passphrase: PASSPHRASE,
+        dest_home: dir.path().join("arch"),
+        dest_platform: Platform::Linux,
+        dry_run: true,
+        overwrite: false,
+        packages: PackageRestoreOptions {
+            distro: Some(Distro::from_id("arch")),
+            manager: Some(PackageManager::Pacman),
+            install: false,
+            commands: CommandProbe::Scripted(scripted),
+        },
+    })
+    .unwrap();
+    assert!(dry.planned_actions.iter().any(|a| {
+        a.component_id == "paru-packages" && a.kind == RestoreActionKind::WouldInstall
+    }));
+    assert!(dry
+        .planned_actions
+        .iter()
+        .any(|a| a.detail.contains("paru -S") && a.detail.contains("google-chrome")));
 }

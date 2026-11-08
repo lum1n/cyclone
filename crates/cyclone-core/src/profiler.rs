@@ -100,6 +100,20 @@ pub const CATALOG: &[CatalogEntry] = &[
         platforms: &[Platform::Linux],
     },
     CatalogEntry {
+        id: "yay-packages",
+        kind: ComponentKind::ToolManifest,
+        linux: Some("~/.config/yay/packages.list"),
+        macos: None,
+        platforms: &[Platform::Linux],
+    },
+    CatalogEntry {
+        id: "paru-packages",
+        kind: ComponentKind::ToolManifest,
+        linux: Some("~/.config/paru/packages.list"),
+        macos: None,
+        platforms: &[Platform::Linux],
+    },
+    CatalogEntry {
         id: "apk-packages",
         kind: ComponentKind::ToolManifest,
         linux: Some("~/.config/apk/world"),
@@ -159,7 +173,7 @@ pub fn build_profile(session: &ProfilerSession<'_>) -> Result<Profile> {
         }
         if !component.include {
             if let (Some(pm), Some(host)) = (component.package_manager, host.as_ref()) {
-                if host.manager == Some(pm) {
+                if host.manager == Some(pm) || host.has_helper(pm) {
                     component.include = true;
                 }
             }

@@ -63,8 +63,8 @@ pub use extension::{
 pub use inspect::{inspect, inspect_envelope, InspectReport};
 pub use manifest::{ImageManifest, ManifestComponent, SecretReference};
 pub use packages::{
-    CommandProbe, HostEnv, PackageCaptureMode, PackageCaptureOptions, PackageDeclaration,
-    PackageManager, PackageRestoreOptions, PackageSpec, ScriptedCommands,
+    is_arch_family, CommandProbe, HostEnv, PackageCaptureMode, PackageCaptureOptions,
+    PackageDeclaration, PackageManager, PackageRestoreOptions, PackageSpec, ScriptedCommands,
 };
 pub use paths::{default_home, expand_tilde, mapped_dest, to_logical};
 pub use platform::{command_on_path, Distro, Platform};

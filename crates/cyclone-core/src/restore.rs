@@ -5,8 +5,9 @@ use crate::bundle::{ImageBundle, InnerBundle};
 use crate::error::Result;
 use crate::manifest::ManifestComponent;
 use crate::packages::{
-    infer_package_manager, install_command_line, mismatch_detail, parse_declaration, run_install,
-    summarize_names, HostEnv, PackageDeclaration, PackageRestoreOptions,
+    infer_package_manager, install_command_line, is_arch_family, mismatch_detail,
+    missing_aur_helper_detail, parse_declaration, run_install, summarize_names, HostEnv,
+    PackageDeclaration, PackageRestoreOptions,
 };
 use crate::paths::mapped_dest;
 use crate::platform::Platform;
@@ -280,32 +281,55 @@ fn plan_package_restore(
     planned: &mut Vec<RestoreAction>,
     warnings: &mut Vec<String>,
 ) {
-    if dest_host.manager != Some(decl.manager) {
-        let detail = mismatch_detail(decl, dest_host);
-        planned.push(RestoreAction {
-            component_id: component.id.clone(),
-            kind: RestoreActionKind::SkipManagerMismatch,
-            detail: detail.clone(),
-        });
-        warnings.push(detail);
-        return;
-    }
-    if !decl.manager.present_on(&opts.packages.commands) {
-        let needed = decl.manager.command();
-        let detail = format!(
-            "{needed} is not on PATH on {} ({}); install {} then re-run restore. packages: {}",
-            dest_host.platform,
-            dest_host.distro.id,
-            decl.manager.display_name(),
-            summarize_names(&decl.packages)
-        );
-        planned.push(RestoreAction {
-            component_id: component.id.clone(),
-            kind: RestoreActionKind::SkipMissingTool,
-            detail: detail.clone(),
-        });
-        warnings.push(detail);
-        return;
+    if decl.manager.is_aur_helper() {
+        if !is_arch_family(&dest_host.distro) {
+            let detail = mismatch_detail(decl, dest_host);
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipManagerMismatch,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
+        if !decl.manager.present_on(&opts.packages.commands) {
+            let detail = missing_aur_helper_detail(decl, dest_host);
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipMissingTool,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
+    } else {
+        if dest_host.manager != Some(decl.manager) {
+            let detail = mismatch_detail(decl, dest_host);
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipManagerMismatch,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
+        if !decl.manager.present_on(&opts.packages.commands) {
+            let needed = decl.manager.command();
+            let detail = format!(
+                "{needed} is not on PATH on {} ({}); install {} then re-run restore. packages: {}",
+                dest_host.platform,
+                dest_host.distro.id,
+                decl.manager.display_name(),
+                summarize_names(&decl.packages)
+            );
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipMissingTool,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
     }
     let dest_file = mapped_dest(dest_logical, "", &opts.dest_home);
     let use_sudo = decl.manager.install_needs_root();
@@ -332,10 +356,13 @@ fn apply_packages(
     let Some(decl) = declaration_from_files(component, &files) else {
         return Ok(());
     };
-    if dest_host.manager != Some(decl.manager) {
-        return Ok(());
-    }
-    if !decl.manager.present_on(&opts.packages.commands) {
+    if decl.manager.is_aur_helper() {
+        if !is_arch_family(&dest_host.distro) || !decl.manager.present_on(&opts.packages.commands) {
+            return Ok(());
+        }
+    } else if dest_host.manager != Some(decl.manager)
+        || !decl.manager.present_on(&opts.packages.commands)
+    {
         return Ok(());
     }
     let dest_file = mapped_dest(dest_logical, "", &opts.dest_home);

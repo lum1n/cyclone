@@ -1,0 +1,5 @@
+# cyclone.package-manager: yay
+# cyclone.distro: arch
+yay 12.4.2-1
+visual-studio-code-bin 1.95.3-1
+spotify 1:1.2.52-1

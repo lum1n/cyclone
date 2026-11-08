@@ -133,6 +133,8 @@ A small catalog still supplies stable ids and per-OS mappings for well-known too
 | `apt-packages` | `~/.config/apt/packages.list` | *(Linux only)* |
 | `dnf-packages` | `~/.config/dnf/packages.list` | *(Linux only)* |
 | `pacman-packages` | `~/.config/pacman/packages.list` | *(Linux only)* |
+| `yay-packages` | `~/.config/yay/packages.list` | *(Linux / Arch AUR)* |
+| `paru-packages` | `~/.config/paru/packages.list` | *(Linux / Arch AUR)* |
 | `apk-packages` | `~/.config/apk/world` | *(Linux only)* |
 | `zypper-packages` | `~/.config/zypper/packages.list` | *(Linux only)* |
 
@@ -142,14 +144,16 @@ Extra files the scan finds (`.tmux.conf`, `~/.config/htop`, …) get generated i
 
 ## Package managers (supported vs warned)
 
-Cyclone captures **declarations** (Brewfile, apt/dnf/pacman/apk/zypper pins) — never installed binaries. Distro is read from `/etc/os-release`; Ubuntu is not assumed. Each manager keeps its own dump format and install command.
+Cyclone captures **declarations** (Brewfile, apt/dnf/pacman/apk/zypper pins, plus AUR lists from yay/paru) — never installed binaries. Distro is read from `/etc/os-release`; Ubuntu is not assumed. Each manager keeps its own dump format and install command.
 
 | Host | Capture | Restore |
 |------|---------|---------|
 | macOS with Homebrew | Live `brew` dump, or `~/Brewfile` if you already have one | `brew bundle --file …` |
 | Debian/Ubuntu (`apt`) | Manual packages + versions (`apt-mark` / `dpkg-query`), or `~/.config/apt/packages.list` | `sudo apt-get install -y …` |
 | Fedora/RHEL (`dnf`) | User-installed NEVRAs, or `~/.config/dnf/packages.list` | `sudo dnf install -y …` |
-| Arch (`pacman`) | `pacman -Qe`, or `~/.config/pacman/packages.list` | `sudo pacman -S --needed --noconfirm …` |
+| Arch (`pacman`) | Official-repo packages (`pacman -Qne` when an AUR helper is present, else `-Qe`) | `sudo pacman -S --needed --noconfirm …` |
+| Arch + `yay` | AUR/foreign packages only (`yay -Qme`), stored apart from pacman | `yay -S --needed --noconfirm …` |
+| Arch + `paru` | AUR/foreign packages only (`paru -Qme`), stored apart from pacman | `paru -S --needed --noconfirm …` |
 | Alpine (`apk`) | `/etc/apk/world` (or `apk info`), or `~/.config/apk/world` | `sudo apk add …` |
 | openSUSE (`zypper`) | Installed packages, or `~/.config/zypper/packages.list` | `sudo zypper --non-interactive install …` |
 
@@ -161,6 +165,7 @@ Cyclone captures **declarations** (Brewfile, apt/dnf/pacman/apk/zypper pins) —
 
 - Brewfile on a Linux host whose manager is apt/dnf/pacman/… (or the reverse)
 - apt pins on Fedora, pacman dump on Ubuntu, Alpine world on Debian, …
+- AUR lists (`yay` / `paru`) on a non-Arch distro, or on Arch without that helper on `PATH`
 - Matching manager but `brew` / `apt-get` / … missing from `PATH`
 - Component not declared for the destination OS (apt lists on macOS)
 

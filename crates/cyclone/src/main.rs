@@ -109,7 +109,7 @@ enum Commands {
         /// Pretend the destination distro is ubuntu, fedora, arch, alpine, opensuse, macos, …
         #[arg(long, value_name = "DISTRO")]
         assume_distro: Option<String>,
-        /// Pretend the destination package manager is homebrew, apt, dnf, pacman, apk, or zypper.
+        /// Pretend the destination package manager is homebrew, apt, dnf, pacman, yay, paru, apk, or zypper.
         #[arg(long, value_name = "MANAGER")]
         assume_manager: Option<String>,
         /// Run the matching package manager's install command (default: yes unless --target-root).
