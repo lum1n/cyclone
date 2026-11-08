@@ -1,0 +1,6 @@
+[user]
+	name = Cyclone Fixture
+	email = fixture@example.test
+# FIXTURE_UNIQUE_DOTFILE_TOKEN
+[core]
+	editor = nvim

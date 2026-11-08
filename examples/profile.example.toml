@@ -1,22 +1,45 @@
 schema_version = 1
-capture_roots = [
-  "~/.gitconfig",
-  "~/.config/nvim",
-]
+notes = "Example profile — copy paths to match your machine before capture. Edit after `cyclone init`."
 
-[[tool_declarations]]
-name = "git"
-kind = "system"
+[[components]]
+id = "gitconfig"
+kind = "dotfile"
+include = true
+linux = "~/.gitconfig"
+macos = "~/.gitconfig"
 supported_platforms = ["linux", "macos"]
 
-[[tool_declarations]]
-name = "rustc"
-kind = "rustup"
-pin = "stable"
+[[components]]
+id = "nvim"
+kind = "config-tree"
+include = true
+linux = "~/.config/nvim"
+macos = "~/.config/nvim"
 supported_platforms = ["linux", "macos"]
+
+[[components]]
+id = "vscode-settings"
+kind = "dotfile"
+include = true
+linux = "~/.config/Code/User/settings.json"
+macos = "~/Library/Application Support/Code/User/settings.json"
+supported_platforms = ["linux", "macos"]
+
+[[components]]
+id = "brewfile"
+kind = "tool-manifest"
+include = true
+linux = "~/Brewfile"
+macos = "~/Brewfile"
+supported_platforms = ["linux", "macos"]
+
+[[components]]
+id = "apt-packages"
+kind = "tool-manifest"
+include = true
+linux = "~/.config/apt/packages.list"
+supported_platforms = ["linux"]
 
 [[secret_references]]
 name = "GITHUB_TOKEN"
 provider = "prompt"
-
-notes = "Example profile — copy paths to match your machine before capture."

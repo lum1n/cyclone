@@ -16,66 +16,114 @@ cargo install --path crates/cyclone
 
 Requirements: **Rust 1.85+** (see `rust-toolchain.toml`).
 
-## Quick start
+## Walkthrough — profile, capture on A, restore on B
+
+This is the MVP loop: **profile → capture on machine A → copy the image → dry-run restore on machine B → apply**.
+
+### Machine A (capture)
 
 ```bash
-# 1. Build a profile (interactive, or --non-interactive for scripts)
+# 1. First-run profiler. Writes an editable profile (XDG: ~/.config/cyclone/profile.toml).
+#    Non-interactive mode includes well-known paths that already exist.
+cyclone init --non-interactive
+
+# Review or change capture scope (or open the TOML in an editor).
 cyclone profile
+# cyclone profile --edit          # re-run the profiler
+# $EDITOR ~/.config/cyclone/profile.toml
 
-# 2. Dry-run capture (no writes, no passphrase)
-cyclone capture --output ./my-image --dry-run
+# 2. See what would be captured (no image, no passphrase).
+cyclone capture --output ./dev-box.cyclone --dry-run
 
-# 3. Capture for real — passphrase required
+# 3. Capture for real. The whole image is encrypted with a user-held key.
 export CYCLONE_PASSPHRASE='choose-a-strong-secret'
-cyclone capture --output ./my-image
-
-# 4. Inspect metadata (secret values are never shown)
-cyclone inspect ./my-image
-
-# 5. Restore — dry-run first, then apply
-cyclone restore ./my-image --dry-run
-cyclone restore ./my-image --target-root ./restored --overwrite
+cyclone capture --output ./dev-box.cyclone
 ```
 
-Profiles are stored at the XDG config path, typically `~/.config/cyclone/profile.toml`. Edit that file to add capture roots, tool pins, and secret **references** (names only).
+Copy `dev-box.cyclone/` to machine B (`scp -r`, a USB drive, …). Registry `push`/`pull` is not in this release.
+
+### Machine B (restore)
+
+```bash
+export CYCLONE_PASSPHRASE='choose-a-strong-secret'   # same key as on A
+
+# Inspect requires the key. Secret *values* are never printed (names only).
+cyclone inspect ./dev-box.cyclone
+
+# Dry-run first: path mapping, creates vs overwrites, missing brew/apt, OS mismatches.
+cyclone restore ./dev-box.cyclone --dry-run
+
+# Apply into a sandbox (recommended the first time), then into $HOME when the diff looks right.
+cyclone restore ./dev-box.cyclone --target-root ./restored --overwrite
+# cyclone restore ./dev-box.cyclone --overwrite
+```
+
+To preview a **Linux → macOS** (or the reverse) restore from either machine:
+
+```bash
+cyclone restore ./dev-box.cyclone --dry-run --assume-platform macos
+```
+
+VS Code settings, for example, map `~/.config/Code/User/settings.json` (Linux) to `~/Library/Application Support/Code/User/settings.json` (macOS). Components that are not declared for the destination OS are skipped with an actionable hint (apt lists on macOS, missing `brew` on PATH, …).
+
+A representative fixture home used in CI lives at [`fixtures/home`](fixtures/home). It contains **no real secrets**.
 
 ## Image format
 
-An image is a directory:
+An image is a **directory**. Every byte of user data is encrypted at rest. Plaintext images are not produced.
 
 | File | Purpose |
 |------|---------|
-| `manifest.json` | Schema version, host platform, component hashes, secret reference names, warnings |
-| `payload.bin.enc` | ChaCha20-Poly1305 ciphertext of JSON [`CapturedPayload`](crates/cyclone-core/src/artifacts.rs) |
-| `encryption.salt` | Salt hex (reserved for future KDF upgrades; passphrase KDF is documented in code) |
+| `header.json` | Envelope only: magic, format version, Argon2id parameters, AEAD name. No manifest, paths, or file bytes. |
+| `bundle.bin.enc` | ChaCha20-Poly1305 ciphertext of the full inner bundle (manifest **and** artifacts) |
 
-The manifest is intentionally readable so `cyclone inspect` works without your key. **File contents live only in the encrypted payload.**
+Unlock with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`. Argon2id salt is random per image (stored in the envelope). Inspect, restore, and provision all require the key.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `profile` | First-run profiler; writes editable `profile.toml` |
-| `capture` | Build an image from the profile (`--dry-run`) |
-| `inspect <path>` | Summarize manifest (redacted secrets) |
-| `restore <path>` | Decrypt and write artifacts (`--dry-run`, `--target-root`, `--overwrite`) |
-| `provision` | Plan/apply VM bootstrap via an extension (`--ext exe`) |
+| `init` | First-run profiler; writes editable `profile.toml` |
+| `profile` | Print the saved profile; `--edit` re-runs the profiler |
+| `capture` | Build an encrypted image (`--dry-run`) |
+| `inspect <path>` | Decrypt and summarize (secret names only) |
+| `restore <path>` | Decrypt and write artifacts (`--dry-run`, `--target-root`, `--overwrite`, `--assume-platform`) |
+| `push` / `pull` | Registry transport — **not implemented**; copy the directory |
+| `provision --ext exe` | Plan/apply VM bootstrap via an extension (exe.dev is a stub) |
+
+## What is captured
+
+The profiler offers a catalog of **logical** components with per-OS paths:
+
+| Component | Linux | macOS |
+|-----------|-------|-------|
+| `gitconfig`, `zshrc`, `bashrc`, `vimrc` | `~/.<file>` | same |
+| `nvim` | `~/.config/nvim` | same |
+| `cargo-config` | `~/.cargo/config.toml` | same |
+| `vscode-settings` | `~/.config/Code/User/settings.json` | `~/Library/Application Support/Code/User/settings.json` |
+| `brewfile` | `~/Brewfile` | `~/Brewfile` |
+| `apt-packages` | `~/.config/apt/packages.list` | *(not supported)* |
+
+**Not captured unless you add them:** SSH private keys, keychains, browser profiles, and large caches (`node_modules`, `.cache`, …). Tooling is stored as **declarations** (Brewfile, apt list), not installed binaries. Restore writes those files; it does not run `brew bundle` or `apt-get`.
+
+Secret **references** in the profile are names and providers only. Any secret *values* that happen to sit in a captured file live inside the encrypted payload, never in `header.json` or logs.
 
 ## Workspace
 
 | Crate | Role |
 |-------|------|
 | [`cyclone`](crates/cyclone) | CLI |
-| [`cyclone-core`](crates/cyclone-core) | Profiles, capture/restore, crypto, `Extension` trait |
-| [`cyclone-ext-exe`](crates/cyclone-ext-exe) | exe.dev provisioning adapter (plan/apply stubs today) |
+| [`cyclone-core`](crates/cyclone-core) | Profiles, capture/restore, whole-image encryption, `Extension` trait |
+| [`cyclone-ext-exe`](crates/cyclone-ext-exe) | exe.dev provisioning adapter (plan/apply stubs) |
 
-Run `cargo doc --workspace --open` for API documentation.
+Run `cargo test --workspace` and `cargo doc --workspace --open` from the repo root.
 
 ## Security model
 
-- **Fail closed:** no passphrase → no encrypt/decrypt (except capture/restore dry-run).
-- **No inline secrets:** manifests list secret names and providers, not values.
-- **User-held key:** derive from `CYCLONE_PASSPHRASE`; Cyclone does not upload or store it.
+- **Fail closed:** no passphrase → no encrypt, inspect, or restore (capture `--dry-run` is the exception).
+- **Whole-image encryption:** manifest and file bytes are inside `bundle.bin.enc`.
+- **User-held key:** derived with Argon2id; Cyclone does not upload or store it. Losing the passphrase means losing the image.
+- **No inline secrets in git:** fixtures and examples use names and placeholder tokens only.
 
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 

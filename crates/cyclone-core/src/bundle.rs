@@ -1,79 +1,127 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{decrypt_bundle, encrypt_bundle, EncryptionKey};
+use crate::artifacts::CapturedPayload;
+use crate::crypto::{decrypt_bytes, encrypt_bytes, EncryptionKey, KdfParams};
 use crate::error::{CycloneError, Result};
 use crate::manifest::ImageManifest;
 
-const MANIFEST_NAME: &str = "manifest.json";
-const PAYLOAD_NAME: &str = "payload.bin.enc";
-const SALT_NAME: &str = "encryption.salt";
-const AAD: &[u8] = b"cyclone-image-v1";
+const HEADER_NAME: &str = "header.json";
+const CIPHERTEXT_NAME: &str = "bundle.bin.enc";
+pub const AAD: &[u8] = b"cyclone-image-v1";
+pub const MAGIC: &str = "cyclone";
+pub const FORMAT_VERSION: u32 = 1;
 
-/// On-disk layout for a Cyclone image (directory bundle).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageLayout {
-    pub root: PathBuf,
+/// Unencrypted envelope. Contains KDF parameters only — no manifest, paths, or file bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImageHeader {
+    pub magic: String,
+    pub format_version: u32,
+    pub aead: String,
+    pub kdf: KdfParams,
 }
 
-pub struct ImageBundle {
-    layout: ImageLayout,
+/// Decrypted image contents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InnerBundle {
     pub manifest: ImageManifest,
+    pub payload: CapturedPayload,
+}
+
+/// On-disk encrypted image (a directory).
+pub struct ImageBundle {
+    pub root: PathBuf,
+    pub header: ImageHeader,
 }
 
 impl ImageBundle {
-    pub fn create_at(path: &Path, manifest: ImageManifest) -> Result<Self> {
-        fs::create_dir_all(path)?;
-        let layout = ImageLayout {
-            root: path.to_path_buf(),
-        };
-        let bundle = Self { layout, manifest };
-        bundle.write_manifest()?;
-        Ok(bundle)
-    }
-
     pub fn open(path: &Path) -> Result<Self> {
         if !path.is_dir() {
             return Err(CycloneError::ImageNotFound(path.display().to_string()));
         }
-        let manifest_path = path.join(MANIFEST_NAME);
-        let raw = fs::read_to_string(&manifest_path).map_err(|_| {
-            CycloneError::ImageNotFound(format!("missing manifest in {}", path.display()))
+        let header_path = path.join(HEADER_NAME);
+        let raw = fs::read_to_string(&header_path).map_err(|_| {
+            CycloneError::ImageNotFound(format!("missing {HEADER_NAME} in {}", path.display()))
         })?;
-        let manifest: ImageManifest = serde_json::from_str(&raw)?;
+        let header: ImageHeader = serde_json::from_str(&raw)?;
+        if header.magic != MAGIC {
+            return Err(CycloneError::InvalidManifest(format!(
+                "not a cyclone image (magic `{}`)",
+                header.magic
+            )));
+        }
+        if header.format_version != FORMAT_VERSION {
+            return Err(CycloneError::InvalidManifest(format!(
+                "unsupported image format {}",
+                header.format_version
+            )));
+        }
+        let ct_path = path.join(CIPHERTEXT_NAME);
+        if !ct_path.is_file() {
+            return Err(CycloneError::ImageNotFound(format!(
+                "missing {CIPHERTEXT_NAME} in {}",
+                path.display()
+            )));
+        }
         Ok(Self {
-            layout: ImageLayout {
-                root: path.to_path_buf(),
-            },
-            manifest,
+            root: path.to_path_buf(),
+            header,
         })
     }
 
+    pub fn write(
+        path: &Path,
+        inner: &InnerBundle,
+        passphrase: &str,
+        fast_kdf: bool,
+    ) -> Result<Self> {
+        if path.exists() {
+            return Err(CycloneError::User(format!(
+                "output already exists: {}",
+                path.display()
+            )));
+        }
+        fs::create_dir_all(path)?;
+        let (key, kdf) = EncryptionKey::derive_new(passphrase, fast_kdf)?;
+        let plaintext = serde_json::to_vec(inner)?;
+        let ciphertext = encrypt_bytes(&plaintext, &key, AAD)?;
+        let header = ImageHeader {
+            magic: MAGIC.into(),
+            format_version: FORMAT_VERSION,
+            aead: "chacha20poly1305".into(),
+            kdf,
+        };
+        fs::write(
+            path.join(HEADER_NAME),
+            serde_json::to_string_pretty(&header)?,
+        )?;
+        fs::write(path.join(CIPHERTEXT_NAME), ciphertext)?;
+        Ok(Self {
+            root: path.to_path_buf(),
+            header,
+        })
+    }
+
+    pub fn decrypt(&self, passphrase: &str) -> Result<InnerBundle> {
+        let key = EncryptionKey::derive(passphrase, &self.header.kdf)?;
+        let ct = fs::read(self.root.join(CIPHERTEXT_NAME))
+            .map_err(|_| CycloneError::ImageNotFound("encrypted bundle missing".into()))?;
+        let plaintext = decrypt_bytes(&ct, &key, AAD)?;
+        Ok(serde_json::from_slice(&plaintext)?)
+    }
+
     pub fn path(&self) -> &Path {
-        &self.layout.root
+        &self.root
     }
 
-    pub fn write_manifest(&self) -> Result<()> {
-        let raw = serde_json::to_string_pretty(&self.manifest)?;
-        fs::write(self.layout.root.join(MANIFEST_NAME), raw)?;
-        Ok(())
-    }
-
-    pub fn write_encrypted_payload(&self, plaintext: &[u8], key: &EncryptionKey) -> Result<()> {
-        let mut salt = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut salt);
-        fs::write(self.layout.root.join(SALT_NAME), hex::encode(salt))?;
-        let ciphertext = encrypt_bundle(plaintext, key, AAD)?;
-        fs::write(self.layout.root.join(PAYLOAD_NAME), ciphertext)?;
-        Ok(())
-    }
-
-    pub fn read_encrypted_payload(&self, key: &EncryptionKey) -> Result<Vec<u8>> {
-        let ct = fs::read(self.layout.root.join(PAYLOAD_NAME))
-            .map_err(|_| CycloneError::ImageNotFound("encrypted payload missing".to_string()))?;
-        decrypt_bundle(&ct, key, AAD)
+    /// Concatenate every file in the image directory (for leak tests).
+    pub fn raw_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        for name in [HEADER_NAME, CIPHERTEXT_NAME] {
+            out.extend_from_slice(&fs::read(self.root.join(name))?);
+        }
+        Ok(out)
     }
 }

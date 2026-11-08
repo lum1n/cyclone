@@ -1,0 +1,2 @@
+FIXTURE_EXCLUDED_TOKEN
+this file must not be captured
