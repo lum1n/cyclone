@@ -23,8 +23,10 @@ This is the MVP loop: **profile → capture on machine A → copy the image → 
 ### Machine A (capture)
 
 ```bash
-# 1. First-run profiler. Writes an editable profile (XDG: ~/.config/cyclone/profile.toml).
-#    Non-interactive mode includes well-known paths that already exist.
+# 1. First-run profiler. Scans ~/.config and ~/ for dotfiles and config-like files,
+#    then writes an editable profile (XDG: ~/.config/cyclone/profile.toml).
+#    Non-interactive mode includes discovered paths that already exist
+#    (SSH private keys, keychains, browser data, and large caches stay opt-in).
 cyclone init --non-interactive
 
 # Review or change capture scope (or open the TOML in an editor).
@@ -105,8 +107,8 @@ Unlock with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`. Argon2id salt
 
 | Command | Description |
 |---------|-------------|
-| `init` | First-run profiler; writes editable `profile.toml` |
-| `profile` | Print the saved profile; `--edit` re-runs the profiler |
+| `init` | First-run profiler; scans `~/.config` and `~/`, writes editable `profile.toml` |
+| `profile` | Print the saved profile; `--edit` re-scans and re-runs the profiler |
 | `capture` | Build an encrypted image (`--dry-run`) |
 | `inspect <path>` | Decrypt and summarize (secret names only) |
 | `restore <path>` | Decrypt and write artifacts (`--dry-run`, `--target-root`, `--overwrite`, `--assume-platform`) |
@@ -115,7 +117,9 @@ Unlock with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`. Argon2id salt
 
 ## What is captured
 
-The profiler offers a catalog of **logical** components with per-OS paths:
+`cyclone init` and `cyclone profile --edit` **scan** `$HOME/.config` and `$HOME` for dotfiles, config trees, and config-like files (for example `Brewfile`). Anything in that scan can be added to the profile — not only a built-in list. Interactive init prints the full candidate list; type component ids or paths to toggle/include. Non-interactive init includes ordinary discovered paths that already exist.
+
+A small catalog still supplies stable ids and per-OS mappings for well-known tools:
 
 | Component | Linux | macOS |
 |-----------|-------|-------|
@@ -126,7 +130,9 @@ The profiler offers a catalog of **logical** components with per-OS paths:
 | `brewfile` | `~/Brewfile` | `~/Brewfile` |
 | `apt-packages` | `~/.config/apt/packages.list` | *(not supported)* |
 
-**Not captured unless you add them:** SSH private keys, keychains, browser profiles, and large caches (`node_modules`, `.cache`, …). Tooling is stored as **declarations** (Brewfile, apt list), not installed binaries. Restore writes those files; it does not run `brew bundle` or `apt-get`.
+Extra files the scan finds (`.tmux.conf`, `~/.config/htop`, …) get generated ids and the same path on both OSes unless you edit the profile.
+
+**Listed, but not captured unless you opt in:** SSH private keys, keychains, browser profiles, and large caches (`~/.cache`, `node_modules`, `~/.cargo`, …). They appear in the profiler as opt-in rows (and as `opt_in = "…"` in `profile.toml`) so you can add them on purpose. Tooling is stored as **declarations** (Brewfile, apt list), not installed binaries. Restore writes those files; it does not run `brew bundle` or `apt-get`.
 
 Secret **references** in the profile are names and providers only. Any secret *values* that happen to sit in a captured file live inside the encrypted payload, never in `header.json` or logs.
 

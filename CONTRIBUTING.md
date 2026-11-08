@@ -25,7 +25,7 @@ Be respectful and constructive in issues and PRs.
 - **`crates/cyclone-core`** — Library used by the CLI and extensions. No cloud SDKs.
 - **`crates/cyclone`** — `clap`-based binary; keep it thin (parse args, call core).
 - **`crates/cyclone-ext-*`** — Optional adapters implementing `cyclone_core::Extension`. `cyclone-ext-exe` talks to exe.dev via `POST /exec`; tests replay fixture HTTP under `crates/cyclone-ext-exe/tests/fixtures/` (no live credentials).
-- **`fixtures/home`** — Fake `$HOME` for Linux CI (dotfiles + tool lists, **no real secrets**).
+- **`fixtures/home`** — Fake `$HOME` for Linux CI (dotfiles, extra config trees, and opt-in exclusion placeholders; **no real secrets**). Used by the profiler scanner tests as well as capture/restore.
 
 ## Pull request checklist
 

@@ -1,0 +1,2 @@
+# fixture htop config
+sort_key=PERCENT_CPU
