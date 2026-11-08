@@ -33,6 +33,7 @@ fn capture_fixture(image: &Path, profile: &Profile, home: &Path) {
         platform: Platform::Linux,
         dry_run: false,
         fast_kdf: true,
+        packages: Default::default(),
     })
     .expect("capture");
     assert!(
@@ -64,6 +65,7 @@ fn fixture_home_round_trip_is_encrypted() {
         platform: Platform::Linux,
         dry_run: true,
         fast_kdf: true,
+        packages: Default::default(),
     })
     .unwrap();
     assert!(dry.dry_run);
@@ -151,6 +153,7 @@ fn restore_dry_run_and_apply_on_second_home() {
         dest_platform: Platform::Linux,
         dry_run: true,
         overwrite: false,
+        packages: Default::default(),
     })
     .unwrap();
     assert!(dry.dry_run);
@@ -171,6 +174,7 @@ fn restore_dry_run_and_apply_on_second_home() {
         dest_platform: Platform::Linux,
         dry_run: false,
         overwrite: true,
+        packages: Default::default(),
     })
     .unwrap();
     assert!(applied.applied_files >= 4);
@@ -187,6 +191,7 @@ fn restore_dry_run_and_apply_on_second_home() {
         dest_platform: Platform::Linux,
         dry_run: true,
         overwrite: false,
+        packages: Default::default(),
     })
     .unwrap();
     assert!(second
@@ -211,6 +216,7 @@ fn macos_path_mapping_and_tool_diffs() {
         dest_platform: Platform::MacOs,
         dry_run: true,
         overwrite: false,
+        packages: Default::default(),
     })
     .unwrap();
 
@@ -241,6 +247,7 @@ fn macos_path_mapping_and_tool_diffs() {
         dest_platform: Platform::MacOs,
         dry_run: false,
         overwrite: true,
+        packages: Default::default(),
     })
     .unwrap();
 

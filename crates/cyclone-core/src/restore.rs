@@ -1,11 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use crate::artifacts::CapturedArtifact;
-use crate::bundle::ImageBundle;
+use crate::bundle::{ImageBundle, InnerBundle};
 use crate::error::Result;
 use crate::manifest::ManifestComponent;
+use crate::packages::{
+    infer_package_manager, install_command_line, is_arch_family, mismatch_detail,
+    missing_aur_helper_detail, parse_declaration, run_install, summarize_names, HostEnv,
+    PackageDeclaration, PackageRestoreOptions,
+};
 use crate::paths::mapped_dest;
-use crate::platform::{command_on_path, Platform};
+use crate::platform::Platform;
 use crate::profile::ComponentKind;
 
 #[derive(Debug, Clone)]
@@ -17,6 +22,7 @@ pub struct RestoreOptions<'a> {
     pub dest_platform: Platform,
     pub dry_run: bool,
     pub overwrite: bool,
+    pub packages: PackageRestoreOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +34,8 @@ pub enum RestoreActionKind {
     SkipExists,
     SkipUnsupported,
     SkipMissingTool,
+    SkipManagerMismatch,
+    WouldInstall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +52,10 @@ impl std::fmt::Display for RestoreAction {
             RestoreActionKind::Overwrite => "~",
             RestoreActionKind::Unchanged => "=",
             RestoreActionKind::SkipExists => "-",
-            RestoreActionKind::SkipUnsupported | RestoreActionKind::SkipMissingTool => "!",
+            RestoreActionKind::SkipUnsupported
+            | RestoreActionKind::SkipMissingTool
+            | RestoreActionKind::SkipManagerMismatch => "!",
+            RestoreActionKind::WouldInstall => "+",
             RestoreActionKind::Map => ">",
         };
         write!(f, "{mark} [{}] {}", self.component_id, self.detail)
@@ -67,12 +78,19 @@ pub fn restore(opts: RestoreOptions<'_>) -> Result<RestoreReport> {
     let mut warnings = inner.manifest.warnings.clone();
     let mut planned = Vec::new();
     let source_platform = inner.manifest.host_platform;
+    let dest_host = HostEnv::assumed(
+        opts.dest_platform,
+        opts.packages.distro.clone(),
+        opts.packages.manager,
+        &opts.packages.commands,
+    );
 
     for component in &inner.manifest.components {
         plan_component(
             component,
             inner.payload.files_for(&component.id).into_iter(),
             &opts,
+            &dest_host,
             &mut planned,
             &mut warnings,
         );
@@ -91,6 +109,14 @@ pub fn restore(opts: RestoreOptions<'_>) -> Result<RestoreReport> {
                 let dest = mapped_dest(dest_logical, &artifact.relative_path, &opts.dest_home);
                 applied_files += apply_file(artifact, &dest, opts.overwrite, &mut warnings)?;
             }
+            if opts.packages.install {
+                if let Err(e) = apply_packages(component, &inner, &opts, &dest_host, dest_logical) {
+                    warnings.push(format!(
+                        "package install for `{}` failed: {e}",
+                        component.id
+                    ));
+                }
+            }
         }
     }
 
@@ -108,9 +134,13 @@ fn plan_component<'a>(
     component: &ManifestComponent,
     files: impl Iterator<Item = &'a CapturedArtifact>,
     opts: &RestoreOptions<'_>,
+    dest_host: &HostEnv,
     planned: &mut Vec<RestoreAction>,
     warnings: &mut Vec<String>,
 ) {
+    let files: Vec<&'a CapturedArtifact> = files.collect();
+    let decl = declaration_from_files(component, &files);
+
     if !component.supports(opts.dest_platform) {
         let supported = if component.supported_platforms.is_empty() {
             "all".into()
@@ -122,15 +152,7 @@ fn plan_component<'a>(
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let hint = match component.kind {
-            ComponentKind::ToolManifest if component.id == "brewfile" => {
-                "Homebrew is not a restore target on this OS; capture/restore brewfile on macOS, or install Linuxbrew and enable the component."
-            }
-            ComponentKind::ToolManifest if component.id == "apt-packages" => {
-                "apt package lists apply on Linux only."
-            }
-            _ => "component is not declared for this OS; nothing will be written.",
-        };
+        let hint = unsupported_hint(component, decl.as_ref(), dest_host);
         planned.push(RestoreAction {
             component_id: component.id.clone(),
             kind: RestoreActionKind::SkipUnsupported,
@@ -163,11 +185,7 @@ fn plan_component<'a>(
         });
     }
 
-    if component.kind == ComponentKind::ToolManifest {
-        tool_warnings(component, opts.dest_platform, planned, warnings);
-    }
-
-    for artifact in files {
+    for artifact in &files {
         let dest = mapped_dest(dest_logical, &artifact.relative_path, &opts.dest_home);
         let dest_s = dest.display().to_string();
         if !dest.exists() {
@@ -206,35 +224,154 @@ fn plan_component<'a>(
             ));
         }
     }
+
+    if let Some(decl) = decl {
+        plan_package_restore(
+            component,
+            &decl,
+            dest_logical,
+            opts,
+            dest_host,
+            planned,
+            warnings,
+        );
+    }
 }
 
-fn tool_warnings(
+fn declaration_from_files(
     component: &ManifestComponent,
-    dest_platform: Platform,
+    files: &[&CapturedArtifact],
+) -> Option<PackageDeclaration> {
+    let manager = infer_package_manager(
+        &component.id,
+        component.linux.as_deref(),
+        component.macos.as_deref(),
+        component.package_manager,
+    )?;
+    let artifact = files.first()?;
+    let body = String::from_utf8_lossy(&artifact.bytes);
+    Some(parse_declaration(manager, "", &body))
+}
+
+fn unsupported_hint(
+    component: &ManifestComponent,
+    decl: Option<&PackageDeclaration>,
+    dest_host: &HostEnv,
+) -> String {
+    if let Some(decl) = decl {
+        return mismatch_detail(decl, dest_host);
+    }
+    match component.kind {
+        ComponentKind::ToolManifest if component.id == "brewfile" => {
+            "Homebrew declarations apply on a host with brew (typically macOS).".into()
+        }
+        ComponentKind::ToolManifest if component.id == "apt-packages" => {
+            "apt package lists apply on Debian/Ubuntu (apt), not this OS.".into()
+        }
+        _ => "component is not declared for this OS; nothing will be written.".into(),
+    }
+}
+
+fn plan_package_restore(
+    component: &ManifestComponent,
+    decl: &PackageDeclaration,
+    dest_logical: &str,
+    opts: &RestoreOptions<'_>,
+    dest_host: &HostEnv,
     planned: &mut Vec<RestoreAction>,
     warnings: &mut Vec<String>,
 ) {
-    let (needed, hint) = match component.id.as_str() {
-        "brewfile" => (
-            "brew",
-            "install Homebrew (macOS) or Linuxbrew, then run `brew bundle`. Cyclone only restores the Brewfile.",
-        ),
-        "apt-packages" => (
-            "apt-get",
-            "install packages from the restored list with apt; Cyclone only restores the declaration file.",
-        ),
-        _ => return,
-    };
-    let present = command_on_path(needed) || (needed == "apt-get" && command_on_path("apt"));
-    if !present {
-        let detail = format!("{needed} is not on PATH on {dest_platform}; {hint}");
-        planned.push(RestoreAction {
-            component_id: component.id.clone(),
-            kind: RestoreActionKind::SkipMissingTool,
-            detail: detail.clone(),
-        });
-        warnings.push(detail);
+    if decl.manager.is_aur_helper() {
+        if !is_arch_family(&dest_host.distro) {
+            let detail = mismatch_detail(decl, dest_host);
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipManagerMismatch,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
+        if !decl.manager.present_on(&opts.packages.commands) {
+            let detail = missing_aur_helper_detail(decl, dest_host);
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipMissingTool,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
+    } else {
+        if dest_host.manager != Some(decl.manager) {
+            let detail = mismatch_detail(decl, dest_host);
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipManagerMismatch,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
+        if !decl.manager.present_on(&opts.packages.commands) {
+            let needed = decl.manager.command();
+            let detail = format!(
+                "{needed} is not on PATH on {} ({}); install {} then re-run restore. packages: {}",
+                dest_host.platform,
+                dest_host.distro.id,
+                decl.manager.display_name(),
+                summarize_names(&decl.packages)
+            );
+            planned.push(RestoreAction {
+                component_id: component.id.clone(),
+                kind: RestoreActionKind::SkipMissingTool,
+                detail: detail.clone(),
+            });
+            warnings.push(detail);
+            return;
+        }
     }
+    let dest_file = mapped_dest(dest_logical, "", &opts.dest_home);
+    let use_sudo = decl.manager.install_needs_root();
+    let cmd = install_command_line(decl.manager, &decl.packages, Some(&dest_file), use_sudo);
+    planned.push(RestoreAction {
+        component_id: component.id.clone(),
+        kind: RestoreActionKind::WouldInstall,
+        detail: format!(
+            "would run `{cmd}` ({} packages: {})",
+            decl.packages.len(),
+            summarize_names(&decl.packages)
+        ),
+    });
+}
+
+fn apply_packages(
+    component: &ManifestComponent,
+    inner: &InnerBundle,
+    opts: &RestoreOptions<'_>,
+    dest_host: &HostEnv,
+    dest_logical: &str,
+) -> Result<()> {
+    let files = inner.payload.files_for(&component.id);
+    let Some(decl) = declaration_from_files(component, &files) else {
+        return Ok(());
+    };
+    if decl.manager.is_aur_helper() {
+        if !is_arch_family(&dest_host.distro) || !decl.manager.present_on(&opts.packages.commands) {
+            return Ok(());
+        }
+    } else if dest_host.manager != Some(decl.manager)
+        || !decl.manager.present_on(&opts.packages.commands)
+    {
+        return Ok(());
+    }
+    let dest_file = mapped_dest(dest_logical, "", &opts.dest_home);
+    run_install(
+        decl.manager,
+        &decl.packages,
+        Some(&dest_file),
+        &opts.packages.commands,
+    )
 }
 
 fn apply_file(

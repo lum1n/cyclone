@@ -31,6 +31,7 @@ fn capture_encrypted(image: &std::path::Path) {
         platform: Platform::Linux,
         dry_run: false,
         fast_kdf: true,
+        packages: Default::default(),
     })
     .expect("capture");
 }

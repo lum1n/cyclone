@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::error::{CycloneError, Result};
+use crate::packages::PackageManager;
 use crate::paths::logical_root_for;
 use crate::platform::Platform;
 
@@ -75,6 +76,9 @@ pub struct ProfileComponent {
     pub macos: Option<String>,
     #[serde(default)]
     pub supported_platforms: Vec<Platform>,
+    /// Native package manager when this component is a declaration dump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_manager: Option<PackageManager>,
     /// Set when the scanner found this path but left it out by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opt_in: Option<OptInReason>,
@@ -196,6 +200,7 @@ mod tests {
                 linux: Some("~/.gitconfig".into()),
                 macos: Some("~/.gitconfig".into()),
                 supported_platforms: vec![Platform::Linux, Platform::MacOs],
+                package_manager: None,
                 opt_in: None,
             }],
             secret_references: vec![],

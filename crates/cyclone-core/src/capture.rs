@@ -7,6 +7,10 @@ use crate::artifacts::{ArtifactKind, CapturedArtifact, CapturedPayload};
 use crate::bundle::{ImageBundle, InnerBundle};
 use crate::error::Result;
 use crate::manifest::{utc_now_rfc3339, ImageManifest, ManifestComponent};
+use crate::packages::{
+    dump_live, infer_package_manager, parse_declaration, should_live_dump, should_read_file,
+    HostEnv, PackageCaptureOptions, PackageDeclaration, PackageManager,
+};
 use crate::paths::{expand_tilde, normalize_rel};
 use crate::platform::Platform;
 use crate::profile::{ComponentKind, Profile, ProfileComponent};
@@ -25,6 +29,7 @@ pub struct CaptureOptions<'a> {
     pub platform: Platform,
     pub dry_run: bool,
     pub fast_kdf: bool,
+    pub packages: PackageCaptureOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +43,11 @@ pub struct CaptureReport {
 
 pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
     opts.profile.validate()?;
+    let host = HostEnv::detect_for(opts.platform, &opts.packages.commands)?;
+    let host = HostEnv {
+        distro: opts.packages.distro.clone().unwrap_or(host.distro),
+        ..host
+    };
     let mut warnings = Vec::new();
     let mut actions = Vec::new();
     let mut components = Vec::new();
@@ -61,6 +71,34 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
             continue;
         };
         let abs = expand_tilde(logical, &opts.home);
+        let pm = infer_package_manager(
+            &component.id,
+            component.linux.as_deref(),
+            component.macos.as_deref(),
+            component.package_manager,
+        );
+
+        if let Some(pm) = pm {
+            match capture_packages(component, logical, &abs, pm, &host, &opts, &mut warnings) {
+                Ok(Some(decl)) => {
+                    push_declaration(
+                        component,
+                        logical,
+                        decl,
+                        &mut components,
+                        &mut artifacts,
+                        &mut actions,
+                    );
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warnings.push(format!("skip `{}`: package dump failed: {e}", component.id));
+                    continue;
+                }
+            }
+        }
+
         if !abs.exists() {
             warnings.push(format!(
                 "skip `{}`: missing path {} ({logical})",
@@ -86,17 +124,7 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
                     }
                     FileRead::Ok { bytes, mode, hash } => {
                         let byte_size = bytes.len() as u64;
-                        components.push(ManifestComponent {
-                            id: component.id.clone(),
-                            kind: component.kind,
-                            linux: component.linux.clone(),
-                            macos: component.macos.clone(),
-                            captured_path: logical.to_string(),
-                            content_sha256: hash,
-                            file_count: 1,
-                            byte_size,
-                            supported_platforms: component.supported_platforms.clone(),
-                        });
+                        components.push(manifest_file(component, logical, hash, byte_size, pm));
                         artifacts.push(CapturedArtifact {
                             component_id: component.id.clone(),
                             relative_path: String::new(),
@@ -143,6 +171,7 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
                     file_count: count,
                     byte_size,
                     supported_platforms: component.supported_platforms.clone(),
+                    package_manager: pm,
                 });
                 actions.push(format!(
                     "+ capture [{}] {logical} ({count} files, {byte_size} bytes)",
@@ -175,6 +204,8 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
         captured_at: utc_now_rfc3339(),
         host_platform: opts.platform,
         host_arch: std::env::consts::ARCH.to_string(),
+        host_distro: Some(host.distro.id.clone()),
+        host_package_manager: host.manager,
         components: components.clone(),
         secret_references: opts.profile.secret_references.clone(),
         warnings: warnings.clone(),
@@ -192,6 +223,103 @@ pub fn capture(opts: CaptureOptions<'_>) -> Result<CaptureReport> {
         actions,
         warnings,
     })
+}
+
+fn capture_packages(
+    component: &ProfileComponent,
+    _logical: &str,
+    abs: &Path,
+    manager: PackageManager,
+    host: &HostEnv,
+    opts: &CaptureOptions<'_>,
+    warnings: &mut Vec<String>,
+) -> Result<Option<PackageDeclaration>> {
+    let file_exists = abs.is_file();
+    if should_read_file(opts.packages.mode, file_exists) {
+        match read_file(abs) {
+            FileRead::Ok { bytes, .. } => {
+                let body = String::from_utf8_lossy(&bytes);
+                return Ok(Some(parse_declaration(manager, &host.distro.id, &body)));
+            }
+            FileRead::Skipped(reason) => {
+                warnings.push(format!("skip `{}`: {reason}", component.id));
+                return Ok(None);
+            }
+        }
+    }
+    if should_live_dump(opts.packages.mode, file_exists) {
+        match dump_live(manager, &host.distro, &opts.packages.commands)? {
+            Some(decl) => return Ok(Some(decl)),
+            None => {
+                if !file_exists {
+                    warnings.push(format!(
+                        "skip `{}`: {} is not available to dump packages on {} ({})",
+                        component.id,
+                        manager.display_name(),
+                        host.platform,
+                        host.distro.id
+                    ));
+                    return Ok(None);
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn push_declaration(
+    component: &ProfileComponent,
+    logical: &str,
+    decl: PackageDeclaration,
+    components: &mut Vec<ManifestComponent>,
+    artifacts: &mut Vec<CapturedArtifact>,
+    actions: &mut Vec<String>,
+) {
+    let bytes = decl.body.into_bytes();
+    let byte_size = bytes.len() as u64;
+    let hash = hex::encode(Sha256::digest(&bytes));
+    let count = decl.packages.len();
+    components.push(manifest_file(
+        component,
+        logical,
+        hash,
+        byte_size,
+        Some(decl.manager),
+    ));
+    artifacts.push(CapturedArtifact {
+        component_id: component.id.clone(),
+        relative_path: String::new(),
+        kind: ArtifactKind::File,
+        bytes,
+        mode: 0o644,
+    });
+    actions.push(format!(
+        "+ capture [{}] {} {} declaration ({count} packages, {byte_size} bytes)",
+        component.id,
+        decl.manager.display_name(),
+        logical
+    ));
+}
+
+fn manifest_file(
+    component: &ProfileComponent,
+    logical: &str,
+    hash: String,
+    byte_size: u64,
+    package_manager: Option<PackageManager>,
+) -> ManifestComponent {
+    ManifestComponent {
+        id: component.id.clone(),
+        kind: component.kind,
+        linux: component.linux.clone(),
+        macos: component.macos.clone(),
+        captured_path: logical.to_string(),
+        content_sha256: hash,
+        file_count: 1,
+        byte_size,
+        supported_platforms: component.supported_platforms.clone(),
+        package_manager,
+    }
 }
 
 enum FileRead {

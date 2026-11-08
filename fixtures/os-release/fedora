@@ -1,0 +1,6 @@
+NAME="Fedora Linux"
+VERSION="41 (Forty One)"
+ID=fedora
+VERSION_ID=41
+PLATFORM_ID="platform:f41"
+PRETTY_NAME="Fedora Linux 41 (Forty One)"

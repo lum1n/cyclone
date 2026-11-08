@@ -30,6 +30,7 @@
 //!     platform: Platform::Linux,
 //!     dry_run: true,
 //!     fast_kdf: true,
+//!     packages: Default::default(),
 //! })?;
 //! # Ok(())
 //! # }
@@ -43,6 +44,7 @@ pub mod error;
 pub mod extension;
 pub mod inspect;
 pub mod manifest;
+pub mod packages;
 pub mod paths;
 pub mod platform;
 pub mod profile;
@@ -60,8 +62,12 @@ pub use extension::{
 };
 pub use inspect::{inspect, inspect_envelope, InspectReport};
 pub use manifest::{ImageManifest, ManifestComponent, SecretReference};
+pub use packages::{
+    is_arch_family, CommandProbe, HostEnv, PackageCaptureMode, PackageCaptureOptions,
+    PackageDeclaration, PackageManager, PackageRestoreOptions, PackageSpec, ScriptedCommands,
+};
 pub use paths::{default_home, expand_tilde, mapped_dest, to_logical};
-pub use platform::{command_on_path, Platform};
+pub use platform::{command_on_path, Distro, Platform};
 pub use profile::{ComponentKind, OptInReason, Profile, ProfileComponent, ProfilePaths};
 pub use profiler::{
     apply_selection_line, build_profile, discover_defaults, run_profiler, CatalogEntry,

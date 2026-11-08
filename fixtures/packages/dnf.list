@@ -1,0 +1,5 @@
+# cyclone.package-manager: dnf
+# cyclone.distro: fedora
+git=2.47.0-1.fc41
+curl=8.11.0-1.fc41
+ripgrep=14.1.1-1.fc41

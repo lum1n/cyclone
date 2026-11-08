@@ -1,0 +1,5 @@
+# cyclone.package-manager: apk
+# cyclone.distro: alpine
+git=2.47.0-r0
+curl
+ripgrep=14.1.1-r0

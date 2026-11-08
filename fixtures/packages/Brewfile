@@ -1,0 +1,7 @@
+# cyclone.package-manager: homebrew
+# cyclone.distro: macos
+tap "homebrew/cask-fonts"
+brew "git" # 2.47.0
+brew "ripgrep"
+brew "neovim"
+cask "firefox"

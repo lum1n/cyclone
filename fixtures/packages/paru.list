@@ -1,0 +1,5 @@
+# cyclone.package-manager: paru
+# cyclone.distro: arch
+paru 2.0.4-1
+visual-studio-code-bin 1.95.3-1
+google-chrome 131.0.6778.85-1

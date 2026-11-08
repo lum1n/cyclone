@@ -1,0 +1,5 @@
+# cyclone.package-manager: pacman
+# cyclone.distro: arch
+git 2.47.0-1
+curl 8.11.0-1
+ripgrep 14.1.1-1

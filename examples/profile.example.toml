@@ -32,6 +32,7 @@ include = true
 linux = "~/Brewfile"
 macos = "~/Brewfile"
 supported_platforms = ["linux", "macos"]
+package_manager = "homebrew"
 
 [[components]]
 id = "tmux-conf"
@@ -47,6 +48,39 @@ kind = "tool-manifest"
 include = true
 linux = "~/.config/apt/packages.list"
 supported_platforms = ["linux"]
+package_manager = "apt"
+
+[[components]]
+id = "dnf-packages"
+kind = "tool-manifest"
+include = false
+linux = "~/.config/dnf/packages.list"
+supported_platforms = ["linux"]
+package_manager = "dnf"
+
+[[components]]
+id = "pacman-packages"
+kind = "tool-manifest"
+include = false
+linux = "~/.config/pacman/packages.list"
+supported_platforms = ["linux"]
+package_manager = "pacman"
+
+[[components]]
+id = "yay-packages"
+kind = "tool-manifest"
+include = false
+linux = "~/.config/yay/packages.list"
+supported_platforms = ["linux"]
+package_manager = "yay"
+
+[[components]]
+id = "paru-packages"
+kind = "tool-manifest"
+include = false
+linux = "~/.config/paru/packages.list"
+supported_platforms = ["linux"]
+package_manager = "paru"
 
 # Discovered by the home scan; left out unless you opt in.
 [[components]]
