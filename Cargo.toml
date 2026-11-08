@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cyclone",
+    "crates/cyclone-core",
+    "crates/cyclone-ext-exe",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+repository = "https://github.com/lum1n/cyclone"
+
+[workspace.dependencies]
+anyhow = "1"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+directories = "5"
+walkdir = "2"
+hex = "0.4"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+cyclone-core = { path = "crates/cyclone-core" }
+cyclone-ext-exe = { path = "crates/cyclone-ext-exe" }

@@ -1,0 +1,22 @@
+schema_version = 1
+capture_roots = [
+  "~/.gitconfig",
+  "~/.config/nvim",
+]
+
+[[tool_declarations]]
+name = "git"
+kind = "system"
+supported_platforms = ["linux", "macos"]
+
+[[tool_declarations]]
+name = "rustc"
+kind = "rustup"
+pin = "stable"
+supported_platforms = ["linux", "macos"]
+
+[[secret_references]]
+name = "GITHUB_TOKEN"
+provider = "prompt"
+
+notes = "Example profile — copy paths to match your machine before capture."
