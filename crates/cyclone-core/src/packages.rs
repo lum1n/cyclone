@@ -1063,6 +1063,9 @@ fn install_tokens(manager: PackageManager, packages: &[PackageSpec]) -> Vec<Stri
     packages
         .iter()
         .filter(|p| p.kind.as_deref() != Some("tap"))
+        // A name starting with `-` would be parsed as an option by the install
+        // command (declarations come from images and may be untrusted).
+        .filter(|p| !p.name.trim_start().starts_with('-'))
         .map(|p| p.install_token(manager))
         .collect()
 }
@@ -1191,6 +1194,16 @@ pub fn fixtures_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_tokens_drop_option_like_names() {
+        let pkgs = vec![
+            PackageSpec::package("--allow-unauthenticated", None),
+            PackageSpec::package("curl", None),
+        ];
+        let (_, args) = install_invocation(PackageManager::Apt, &pkgs, None);
+        assert_eq!(args, vec!["install", "-y", "curl"]);
+    }
 
     fn read_fixture(name: &str) -> String {
         std::fs::read_to_string(fixtures_dir().join(name)).expect(name)
