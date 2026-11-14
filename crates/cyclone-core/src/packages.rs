@@ -1460,4 +1460,164 @@ mod tests {
         assert!(decl.packages.iter().any(|p| p.name == "firefox"));
         assert!(decl.body.contains("brew \"git\""));
     }
+
+    #[test]
+    fn brewfile_parses_kinds_versions_and_skips_noise() {
+        let body = "# comment\n\ntap \"homebrew/cask-fonts\"\nbrew \"git\" # 2.47.0\ncask \"firefox\" # 131\nbrew \"jq\"\nmas \"Xcode\", id: 1\nbrew \"unterminated\n";
+        let pkgs = parse_brewfile(body);
+        let got: Vec<_> = pkgs
+            .iter()
+            .map(|p| (p.name.as_str(), p.kind.as_deref(), p.version.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("homebrew/cask-fonts", Some("tap"), None),
+                ("git", Some("formula"), Some("2.47.0")),
+                ("firefox", Some("cask"), Some("131")),
+                ("jq", Some("formula"), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn brew_quoted_handles_unquoted_and_options() {
+        assert_eq!(brew_quoted("\"a\", args: [\"x\"]").as_deref(), Some("a"));
+        assert_eq!(brew_quoted("a, link: false").as_deref(), Some("a"));
+        assert_eq!(brew_quoted("\"open").as_deref(), None);
+        assert_eq!(brew_version_comment("\"a\" #   "), None);
+    }
+
+    #[test]
+    fn name_eq_lines_handle_comments_tabs_and_empty_versions() {
+        let body =
+            "# header\nvim=9.1-1\nbare\nnovers=\ntabbed\t1.2\n=orphan\nwith-comment=1 # note\n\n";
+        let pkgs = parse_name_eq_lines(body);
+        let got: Vec<_> = pkgs
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("vim", Some("9.1-1")),
+                ("bare", None),
+                ("novers", None),
+                ("tabbed", Some("1.2")),
+                ("with-comment", Some("1")),
+            ]
+        );
+    }
+
+    #[test]
+    fn name_version_lines_split_on_separator() {
+        let pkgs = parse_name_version_lines("# c\nbash 5.2\nsolo\n\n", ' ');
+        assert_eq!(pkgs.len(), 2);
+        assert_eq!(pkgs[0].version.as_deref(), Some("5.2"));
+        assert_eq!(pkgs[1].version, None);
+    }
+
+    #[test]
+    fn zypper_table_keeps_only_installed_rows() {
+        let body = "S | Name | Type | Version | Arch\n--+------+------+---------+-----\ni | vim | package | 9.1 | x86_64\ni+ | git | package | 2.4 | x86_64\n  | curl | package | 8.0 | x86_64\ni | short | pkg\ni |  | package | 1 | x\n";
+        let pkgs = parse_zypper_table(body);
+        let got: Vec<_> = pkgs
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_deref()))
+            .collect();
+        assert_eq!(got, vec![("vim", Some("9.1")), ("git", Some("2.4"))]);
+    }
+
+    #[test]
+    fn dpkg_versions_maps_names_and_ignores_malformed_lines() {
+        let map = dpkg_versions("git\t1:2.43\nnoversion\n curl \t 8.5 \n");
+        assert_eq!(map.get("git").map(String::as_str), Some("1:2.43"));
+        assert_eq!(map.get("curl").map(String::as_str), Some("8.5"));
+        assert!(!map.contains_key("noversion"));
+    }
+
+    #[test]
+    fn brew_list_parses_with_and_without_versions() {
+        let pkgs = parse_brew_list("git 2.47.0\nwget\n\n", "formula");
+        assert_eq!(pkgs.len(), 2);
+        assert_eq!(pkgs[0].version.as_deref(), Some("2.47.0"));
+        assert_eq!(pkgs[1].version, None);
+        assert_eq!(pkgs[1].kind.as_deref(), Some("formula"));
+    }
+
+    #[test]
+    fn homebrew_dump_skips_default_taps_and_falls_back_to_plain_list() {
+        let commands = CommandProbe::Scripted(
+            ScriptedCommands::new()
+                .stdout(
+                    "brew",
+                    &["tap"],
+                    "homebrew/core\nhomebrew/cask\nuser/tools\n",
+                )
+                .stdout("brew", &["list"], "git\n"),
+        );
+        let pkgs = dump_homebrew(&commands).unwrap();
+        let taps: Vec<_> = pkgs
+            .iter()
+            .filter(|p| p.kind.as_deref() == Some("tap"))
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(taps, vec!["user/tools"]);
+        assert!(pkgs.iter().any(|p| p.name == "git"));
+    }
+
+    #[test]
+    fn homebrew_dump_falls_back_to_bundle_when_nothing_listed() {
+        let commands = CommandProbe::Scripted(ScriptedCommands::new().stdout(
+            "brew",
+            &["bundle", "dump", "--file", "-"],
+            "brew \"ripgrep\"\n",
+        ));
+        let pkgs = dump_homebrew(&commands).unwrap();
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs[0].name, "ripgrep");
+    }
+
+    #[test]
+    fn apt_dump_joins_manual_packages_with_versions() {
+        let commands = CommandProbe::Scripted(
+            ScriptedCommands::new()
+                .stdout("apt-mark", &["showmanual"], "git\n\nvim\n")
+                .stdout(
+                    "dpkg-query",
+                    &["-W", "-f=${Package}\t${Version}\n"],
+                    "git\t1\nlibc6\t2\n",
+                ),
+        );
+        let pkgs = dump_apt(&commands).unwrap();
+        assert_eq!(pkgs.len(), 2);
+        assert_eq!(pkgs[0].version.as_deref(), Some("1"));
+        assert_eq!(pkgs[1].version, None);
+    }
+
+    #[test]
+    fn apt_dump_errors_without_apt_mark_output() {
+        let commands = CommandProbe::Scripted(ScriptedCommands::new());
+        assert!(dump_apt(&commands).is_err());
+    }
+
+    #[test]
+    fn summarize_names_truncates_and_ignores_taps() {
+        assert_eq!(summarize_names(&[]), "(none)");
+        let tap = PackageSpec {
+            name: "t/t".into(),
+            version: None,
+            kind: Some("tap".into()),
+        };
+        assert_eq!(summarize_names(&[tap.clone()]), "(none)");
+        let many: Vec<_> = (0..15)
+            .map(|i| PackageSpec::package(format!("p{i}"), None))
+            .chain(std::iter::once(tap))
+            .collect();
+        let s = summarize_names(&many);
+        assert!(s.starts_with("p0, p1,"));
+        assert!(s.contains("p11"));
+        assert!(!s.contains("p12,"));
+        assert!(s.ends_with("and 3 more"));
+    }
 }
