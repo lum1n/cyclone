@@ -117,6 +117,13 @@ Unlock with `--passphrase`, `--key-file`, or `CYCLONE_PASSPHRASE`. Argon2id salt
 | `push` / `pull` | Registry transport — **not implemented**; copy the directory |
 | `provision --ext exe-dev` | Bootstrap an exe.dev VM from the encrypted image (**dry-run by default**; `--apply` calls the API) |
 
+Other options:
+
+- `init` / `profile`: `--output <path>` writes the profile somewhere other than the XDG default; `init --force` overwrites an existing profile; `profile --edit --non-interactive` re-scans without prompts.
+- `capture`: `--profile <path>` uses a profile other than the discovered one. `--packages` can also be set with `CYCLONE_PACKAGE_CAPTURE`.
+- `init`, `profile`, `capture`, `restore`: `--home <dir>` (or `CYCLONE_HOME`) sets the directory treated as `~`.
+- `capture`, `inspect`, `restore`, `provision`: `--passphrase` / `CYCLONE_PASSPHRASE` or `--key-file <path>` (trailing newline trimmed; not both).
+
 ## What is captured
 
 `cyclone init` and `cyclone profile --edit` **scan** `$HOME/.config` and `$HOME` for dotfiles, config trees, and config-like files (for example `Brewfile`). Anything in that scan can be added to the profile — not only a built-in list. Interactive init prints the full candidate list; type component ids or paths to toggle/include. Non-interactive init includes ordinary discovered paths that already exist.
