@@ -2,12 +2,12 @@ use std::path::{Path, PathBuf};
 
 use crate::artifacts::CapturedArtifact;
 use crate::bundle::{ImageBundle, InnerBundle};
-use crate::error::Result;
+use crate::error::{CycloneError, Result};
 use crate::manifest::ManifestComponent;
 use crate::packages::{
     infer_package_manager, install_command_line, is_arch_family, mismatch_detail,
     missing_aur_helper_detail, parse_declaration, run_install, summarize_names, HostEnv,
-    PackageDeclaration, PackageRestoreOptions,
+    PackageDeclaration, PackageManager, PackageRestoreOptions,
 };
 use crate::paths::mapped_dest;
 use crate::platform::Platform;
@@ -366,6 +366,18 @@ fn apply_packages(
         return Ok(());
     }
     let dest_file = mapped_dest(dest_logical, "", &opts.dest_home);
+    // `brew bundle --file` installs from the file on disk, not from the image. If the
+    // existing Brewfile was kept (no --overwrite), it is not the captured declaration.
+    if decl.manager == PackageManager::Homebrew {
+        let captured = files.first().map(|a| a.bytes.as_slice());
+        let on_disk = std::fs::read(&dest_file).ok();
+        if captured.is_none() || on_disk.as_deref() != captured {
+            return Err(CycloneError::User(format!(
+                "{} differs from the captured Brewfile (use --overwrite); not running brew bundle",
+                dest_file.display()
+            )));
+        }
+    }
     run_install(
         decl.manager,
         &decl.packages,
