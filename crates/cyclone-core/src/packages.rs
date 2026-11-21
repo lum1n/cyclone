@@ -1620,4 +1620,228 @@ mod tests {
         assert!(!s.contains("p12,"));
         assert!(s.ends_with("and 3 more"));
     }
+
+    #[test]
+    fn install_tokens_drop_option_like_names_for_every_manager() {
+        let pkgs = vec![
+            PackageSpec::package("  --config=/tmp/evil", None),
+            PackageSpec::package("-", None),
+            PackageSpec::package("-y", Some("1".into())),
+            PackageSpec::package("foo-bar", None),
+        ];
+        for manager in [
+            PackageManager::Apt,
+            PackageManager::Dnf,
+            PackageManager::Pacman,
+            PackageManager::Yay,
+            PackageManager::Paru,
+            PackageManager::Apk,
+            PackageManager::Zypper,
+        ] {
+            assert_eq!(
+                install_tokens(manager, &pkgs),
+                vec!["foo-bar".to_string()],
+                "{manager:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_tokens_skip_taps_and_format_versions_per_manager() {
+        let pkgs = vec![
+            PackageSpec {
+                name: "user/tools".into(),
+                version: None,
+                kind: Some("tap".into()),
+            },
+            PackageSpec::package("vim", Some("9.1".into())),
+        ];
+        assert_eq!(install_tokens(PackageManager::Apt, &pkgs), vec!["vim=9.1"]);
+        assert_eq!(install_tokens(PackageManager::Dnf, &pkgs), vec!["vim-9.1"]);
+        assert_eq!(
+            install_tokens(PackageManager::Pacman, &pkgs),
+            vec!["vim=9.1"]
+        );
+        assert_eq!(install_tokens(PackageManager::Apk, &pkgs), vec!["vim=9.1"]);
+        assert_eq!(
+            install_tokens(PackageManager::Zypper, &pkgs),
+            vec!["vim=9.1"]
+        );
+        assert_eq!(install_tokens(PackageManager::Yay, &pkgs), vec!["vim"]);
+        assert_eq!(install_tokens(PackageManager::Paru, &pkgs), vec!["vim"]);
+    }
+
+    #[test]
+    fn install_invocation_for_apk_and_zypper() {
+        let pkgs = vec![PackageSpec::package("git", None)];
+        assert_eq!(
+            install_invocation(PackageManager::Apk, &pkgs, None),
+            (
+                "apk".to_string(),
+                vec!["add".to_string(), "git".to_string()]
+            )
+        );
+        let (program, args) = install_invocation(PackageManager::Zypper, &pkgs, None);
+        assert_eq!(program, "zypper");
+        assert_eq!(args, vec!["--non-interactive", "install", "git"]);
+        let line = install_command_line(PackageManager::Zypper, &pkgs, None, false);
+        assert_eq!(line, "zypper --non-interactive install git");
+    }
+
+    #[test]
+    fn run_install_skips_empty_non_brew_lists() {
+        let scripted = ScriptedCommands::new().allow("apt-get");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        run_install(PackageManager::Apt, &[], None, &commands).unwrap();
+        assert!(scripted.ran().is_empty());
+    }
+
+    #[test]
+    fn run_install_runs_brew_bundle_even_without_packages() {
+        let scripted = ScriptedCommands::new().allow("brew");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        run_install(
+            PackageManager::Homebrew,
+            &[],
+            Some(Path::new("/tmp/Brewfile")),
+            &commands,
+        )
+        .unwrap();
+        assert_eq!(scripted.ran(), vec!["brew bundle --file /tmp/Brewfile"]);
+    }
+
+    #[test]
+    fn run_install_aur_helper_runs_without_sudo_and_drops_options() {
+        let scripted = ScriptedCommands::new().allow("yay");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        let pkgs = vec![
+            PackageSpec::package("--sudoflags=-E", None),
+            PackageSpec::package("google-chrome", Some("1".into())),
+        ];
+        run_install(PackageManager::Yay, &pkgs, None, &commands).unwrap();
+        assert_eq!(
+            scripted.ran(),
+            vec!["yay -S --needed --noconfirm google-chrome"]
+        );
+    }
+
+    #[test]
+    fn run_install_root_manager_drops_option_like_names() {
+        let scripted = ScriptedCommands::new().allow("apt-get");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        let pkgs = vec![
+            PackageSpec::package("-o=APT::Get::AllowUnauthenticated=true", None),
+            PackageSpec::package("curl", None),
+        ];
+        run_install(PackageManager::Apt, &pkgs, None, &commands).unwrap();
+        let ran = scripted.ran();
+        assert_eq!(ran.len(), 1);
+        // `sudo -n` is prepended unless the test runs as root.
+        assert!(ran[0].ends_with("apt-get install -y curl"), "{ran:?}");
+        assert!(!ran[0].contains("AllowUnauthenticated"));
+    }
+
+    #[test]
+    fn dnf_dump_uses_yum_and_falls_back_to_plain_repoquery() {
+        let commands = CommandProbe::Scripted(ScriptedCommands::new().stdout(
+            "yum",
+            &["repoquery", "--userinstalled"],
+            "git\nvim\n",
+        ));
+        let pkgs = dump_dnf(&commands).unwrap();
+        let names: Vec<_> = pkgs.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["git", "vim"]);
+        assert!(pkgs.iter().all(|p| p.version.is_none()));
+    }
+
+    #[test]
+    fn dnf_dump_prefers_dnf_with_versions() {
+        let commands = CommandProbe::Scripted(ScriptedCommands::new().allow("yum").stdout(
+            "dnf",
+            &[
+                "repoquery",
+                "--userinstalled",
+                "--queryformat",
+                "%{name}=%{version}-%{release}\n",
+            ],
+            "git=2.47.0-1.fc41\n",
+        ));
+        let pkgs = dump_dnf(&commands).unwrap();
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs[0].version.as_deref(), Some("2.47.0-1.fc41"));
+    }
+
+    #[test]
+    fn pacman_dump_keeps_foreign_packages_without_aur_helper() {
+        let scripted = ScriptedCommands::new().stdout("pacman", &["-Qe"], "git 2.47.0-1\n");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        let pkgs = dump_pacman(&commands).unwrap();
+        assert_eq!(pkgs[0].name, "git");
+        assert_eq!(scripted.ran(), vec!["pacman -Qe"]);
+    }
+
+    #[test]
+    fn pacman_dump_limits_to_official_repos_with_aur_helper_and_falls_back() {
+        let scripted =
+            ScriptedCommands::new()
+                .allow("paru")
+                .stdout("pacman", &["-Q"], "base 3-2\n");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        let pkgs = dump_pacman(&commands).unwrap();
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs[0].version.as_deref(), Some("3-2"));
+        assert_eq!(scripted.ran(), vec!["pacman -Qne", "pacman -Q"]);
+    }
+
+    #[test]
+    fn aur_helper_dump_marks_packages_as_aur() {
+        let commands = CommandProbe::Scripted(ScriptedCommands::new().stdout(
+            "yay",
+            &["-Qme"],
+            "google-chrome 131-1\nyay-bin 12.4-1\n",
+        ));
+        let pkgs = dump_aur_helper("yay", &commands).unwrap();
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.iter().all(|p| p.kind.as_deref() == Some("aur")));
+        let empty = CommandProbe::Scripted(ScriptedCommands::new());
+        assert!(dump_aur_helper("paru", &empty).is_err());
+    }
+
+    #[test]
+    fn apk_dump_falls_back_to_plain_info() {
+        let commands = CommandProbe::Scripted(ScriptedCommands::new().stdout(
+            "apk",
+            &["info"],
+            "busybox\nmusl\n",
+        ));
+        let pkgs = dump_apk(&commands).unwrap();
+        let names: Vec<_> = pkgs.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["busybox", "musl"]);
+    }
+
+    #[test]
+    fn zypper_dump_parses_table_or_name_eq_output() {
+        let args = [
+            "--non-interactive",
+            "--quiet",
+            "search",
+            "--installed-only",
+            "--type",
+            "package",
+        ];
+        let table = CommandProbe::Scripted(ScriptedCommands::new().stdout(
+            "zypper",
+            &args,
+            "S | Name | Type | Version | Arch\ni | vim | package | 9.1 | x86_64\n",
+        ));
+        let pkgs = dump_zypper(&table).unwrap();
+        assert_eq!(pkgs[0].name, "vim");
+        assert_eq!(pkgs[0].version.as_deref(), Some("9.1"));
+
+        let eq =
+            CommandProbe::Scripted(ScriptedCommands::new().stdout("zypper", &args, "git=2.47\n"));
+        let pkgs = dump_zypper(&eq).unwrap();
+        assert_eq!(pkgs[0].name, "git");
+        assert_eq!(pkgs[0].version.as_deref(), Some("2.47"));
+    }
 }
