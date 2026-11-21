@@ -790,3 +790,63 @@ fn opted_in_brewfile_dotfile_is_captured_when_brew_is_absent() {
     let body = std::fs::read_to_string(dest.join("Brewfile")).unwrap();
     assert!(body.contains("handwritten-ripgrep"));
 }
+
+#[test]
+fn brew_bundle_is_not_run_on_a_kept_existing_brewfile() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let profile = profile_one(
+        "brewfile",
+        "~/Brewfile",
+        Some("~/Brewfile"),
+        PackageManager::Homebrew,
+        vec![Platform::MacOs],
+    );
+    let image = dir.path().join("img.cyclone");
+    let scripted = scripted_list(PackageManager::Homebrew);
+    capture_live(
+        &home,
+        &image,
+        &profile,
+        Platform::MacOs,
+        Distro::from_id("macos"),
+        CommandProbe::Scripted(scripted.clone()),
+    );
+
+    let dest = dir.path().join("dest");
+    write_home_file(&dest, "Brewfile", "brew \"something-else\"\n");
+    let restore_scripted = scripted_list(PackageManager::Homebrew);
+    let report = restore(RestoreOptions {
+        image: &image,
+        passphrase: PASSPHRASE,
+        dest_home: dest.clone(),
+        dest_platform: Platform::MacOs,
+        dry_run: false,
+        overwrite: false,
+        packages: PackageRestoreOptions {
+            distro: Some(Distro::from_id("macos")),
+            manager: Some(PackageManager::Homebrew),
+            install: true,
+            commands: CommandProbe::Scripted(restore_scripted.clone()),
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dest.join("Brewfile")).unwrap(),
+        "brew \"something-else\"\n"
+    );
+    let ran = restore_scripted.ran();
+    assert!(
+        !ran.iter().any(|c| c.starts_with("brew bundle")),
+        "brew bundle must not run on the user's own Brewfile: {ran:?}"
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("not running brew bundle")),
+        "{:?}",
+        report.warnings
+    );
+}

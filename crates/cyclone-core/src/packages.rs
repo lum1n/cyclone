@@ -1076,7 +1076,10 @@ pub fn run_install(
     file: Option<&Path>,
     commands: &CommandProbe,
 ) -> Result<()> {
-    if packages.is_empty() && !matches!(manager, PackageManager::Homebrew) {
+    // Check the filtered targets: a declaration whose names were all dropped would
+    // otherwise run e.g. `pacman -S --needed --noconfirm` with no targets, which fails.
+    if !matches!(manager, PackageManager::Homebrew) && install_tokens(manager, packages).is_empty()
+    {
         return Ok(());
     }
     let (program, args) = install_invocation(manager, packages, file);
@@ -1203,6 +1206,15 @@ mod tests {
         ];
         let (_, args) = install_invocation(PackageManager::Apt, &pkgs, None);
         assert_eq!(args, vec!["install", "-y", "curl"]);
+    }
+
+    #[test]
+    fn run_install_skips_when_every_name_is_dropped() {
+        let scripted = ScriptedCommands::new().allow("yay");
+        let commands = CommandProbe::Scripted(scripted.clone());
+        let pkgs = vec![PackageSpec::package("--overwrite=*", None)];
+        run_install(PackageManager::Yay, &pkgs, None, &commands).unwrap();
+        assert!(scripted.ran().is_empty(), "ran: {:?}", scripted.ran());
     }
 
     fn read_fixture(name: &str) -> String {
